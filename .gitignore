@@ -1,0 +1,17 @@
+# Fichiers système
+.DS_Store
+Thumbs.db
+*.log
+
+# Fichiers de configuration locale
+client.log
+server.log
+
+# Fichiers Word/Excel (documentation — à ne pas versionner)
+*.docx
+*.xlsx
+*.pdf
+
+# Credentials locaux
+*.pem
+*.key

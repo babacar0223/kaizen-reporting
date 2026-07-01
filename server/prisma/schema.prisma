@@ -1,0 +1,153 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model DimBu {
+  id        Int         @id @default(autoincrement())
+  nom       String      @unique
+  nomCourt  String      @unique @map("nom_court")
+  couleurUi String      @map("couleur_ui")
+  entites   DimEntite[]
+
+  @@map("dim_bu")
+}
+
+model DimEntite {
+  id                 Int                  @id @default(autoincrement())
+  nom                String
+  nomCourt           String               @unique @map("nom_court")
+  buId               Int                  @map("bu_id")
+  bu                 DimBu                @relation(fields: [buId], references: [id])
+  deviseSource       String               @default("EUR") @map("devise_source")
+  tauxConversion     Decimal              @default(1) @map("taux_conversion") @db.Decimal(12, 6)
+  ratioBu            Decimal?             @map("ratio_bu") @db.Decimal(8, 6)
+  actif              Boolean              @default(true)
+  clients            DimClient[]
+  faitPl             FaitPl[]
+  faitRevenusClients FaitRevenusClients[]
+
+  @@map("dim_entites")
+}
+
+model DimClient {
+  id                 Int                  @id @default(autoincrement())
+  nom                String
+  entiteId           Int                  @map("entite_id")
+  entite             DimEntite            @relation(fields: [entiteId], references: [id])
+  bu                 String
+  type               String
+  sousClients        DimSousClient[]
+  faitRevenusClients FaitRevenusClients[]
+
+  @@map("dim_clients")
+}
+
+model DimSousClient {
+  id                 Int                  @id @default(autoincrement())
+  nom                String
+  clientId           Int                  @map("client_id")
+  client             DimClient            @relation(fields: [clientId], references: [id])
+  entiteId           Int                  @map("entite_id")
+  faitRevenusClients FaitRevenusClients[]
+
+  @@map("dim_sous_clients")
+}
+
+model DimLignePl {
+  id             Int      @id @default(autoincrement())
+  nom            String   @unique
+  ordreAffichage Int      @map("ordre_affichage")
+  type           String
+  faitPl         FaitPl[]
+
+  @@map("dim_lignes_pl")
+}
+
+model FaitPl {
+  id           Int        @id @default(autoincrement())
+  date         DateTime   @db.Date
+  annee        Int
+  mois         Int
+  entiteId     Int        @map("entite_id")
+  entite       DimEntite  @relation(fields: [entiteId], references: [id])
+  bu           String
+  lignePlId    Int        @map("ligne_pl_id")
+  lignePl      DimLignePl @relation(fields: [lignePlId], references: [id])
+  typeValeur   String     @map("type_valeur")
+  typePeriode  String     @map("type_periode")
+  montant      Decimal    @db.Decimal(15, 2)
+  sourceOnglet String?    @map("source_onglet")
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  @@unique([date, entiteId, lignePlId, typeValeur, typePeriode])
+  @@index([annee, mois, bu])
+  @@index([entiteId, annee])
+  @@map("fait_pl")
+}
+
+model FaitRevenusClients {
+  id            Int            @id @default(autoincrement())
+  date          DateTime       @db.Date
+  annee         Int
+  mois          Int
+  entiteId      Int            @map("entite_id")
+  entite        DimEntite      @relation(fields: [entiteId], references: [id])
+  bu            String
+  clientId      Int?           @map("client_id")
+  client        DimClient?     @relation(fields: [clientId], references: [id])
+  sousClientId  Int?           @map("sous_client_id")
+  sousClient    DimSousClient? @relation(fields: [sousClientId], references: [id])
+  clientNom     String         @map("client_nom")
+  sousClientNom String?        @map("sous_client_nom")
+  lignePl       String         @map("ligne_pl")
+  typeValeur    String         @map("type_valeur")
+  montant       Decimal        @db.Decimal(15, 2)
+  marginRate    Decimal?       @map("margin_rate") @db.Decimal(8, 6)
+  sharePct      Decimal?       @map("share_pct") @db.Decimal(8, 6)
+  sourceOnglet  String?        @map("source_onglet")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+
+  @@index([annee, mois, bu, entiteId])
+  @@index([entiteId, clientNom, annee])
+  @@map("fait_revenus_clients")
+}
+
+model User {
+  id            Int        @id @default(autoincrement())
+  email         String     @unique
+  passwordHash  String     @map("password_hash")
+  nom           String
+  prenom        String
+  role          String     @default("VIEWER")
+  buAccess      String[]   @map("bu_access")
+  entitesAccess Int[]      @map("entites_access")
+  actif         Boolean    @default(true)
+  lastLoginAt   DateTime?  @map("last_login_at")
+  createdAt     DateTime   @default(now()) @map("created_at")
+  updatedAt     DateTime   @updatedAt @map("updated_at")
+  auditLogs     AuditLog[]
+
+  @@map("users")
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  user      User     @relation(fields: [userId], references: [id])
+  action    String
+  tableName String?  @map("table_name")
+  entiteId  Int?     @map("entite_id")
+  periode   String?
+  details   Json?
+  ts        DateTime @default(now())
+
+  @@index([userId, ts])
+  @@index([tableName, ts])
+  @@map("audit_logs")
+}

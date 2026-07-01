@@ -1,0 +1,14 @@
+[build]
+builder = "NIXPACKS"
+buildCommand = "npm ci && npx prisma generate && npm run build"
+
+[deploy]
+startCommand = "npx prisma migrate deploy && node dist/index.js"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+
+[environments.production.variables]
+NODE_ENV = "production"
+PORT = "4000"
+TAUX_CFA_EUR = "655.957"
+JWT_EXPIRES_IN = "8h"
