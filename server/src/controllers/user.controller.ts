@@ -33,8 +33,9 @@ export async function create(req: Request, res: Response): Promise<void> {
 }
 
 export async function update(req: Request, res: Response): Promise<void> {
-  const { nom, prenom, role, buAccess, entitesAccess, actif, password } = req.body;
+  const { email, nom, prenom, role, buAccess, entitesAccess, actif, password } = req.body;
   const data: Record<string, unknown> = { nom, prenom, role, buAccess, entitesAccess, actif };
+  if (email) data.email = email;
   if (password) data.passwordHash = await bcrypt.hash(password, 12);
   const user = await prisma.user.update({
     where: { id: parseInt(String(req.params.id)) },
