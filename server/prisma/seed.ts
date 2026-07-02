@@ -57,6 +57,9 @@ async function main() {
   }
 
   // ── Entités LOGISTICS (CFA) ────────────────────────────────────────────────
+  // Rename legacy nomCourt 'CSTT AO' → 'CSTT' if it still exists
+  await prisma.dimEntite.updateMany({ where: { nomCourt: 'CSTT AO' }, data: { nomCourt: 'CSTT' } });
+
   const entitesLog = [
     { nom: 'CSTT Afrique de l\'Ouest', nomCourt: 'CSTT', deviseSource: 'CFA', tauxConversion: 655.957 },
     { nom: 'Afrilog Mali', nomCourt: 'AM', deviseSource: 'CFA', tauxConversion: 655.957 },
