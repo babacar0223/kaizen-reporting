@@ -23,6 +23,7 @@ export interface JwtPayload {
   role: Role;
   buAccess: string[];
   entitesAccess: number[];
+  tresorerieEntitesAccess: number[];
 }
 
 export interface AuthRequest extends Express.Request {

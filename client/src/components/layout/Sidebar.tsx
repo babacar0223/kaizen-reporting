@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, BarChart3, TrendingUp, Settings, Upload, ChevronRight, LogOut, Building2, Activity } from 'lucide-react';
+import { LayoutDashboard, BarChart3, TrendingUp, Settings, Upload, ChevronRight, LogOut, Building2, Activity, Wallet } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useFiltersStore } from '../../stores/filters.store';
 import { useAuthStore } from '../../stores/auth.store';
@@ -17,6 +17,7 @@ const NAV_ITEMS = [
   { to: '/figures', label: 'Figures', icon: BarChart3 },
   { to: '/charts', label: 'Charts', icon: TrendingUp },
   { to: '/statistics', label: 'Statistics', icon: Activity },
+  { to: '/tresorerie', label: 'Trésorerie', icon: Wallet },
   { to: '/settings', label: 'Settings', icon: Settings, roles: ['SUPER_ADMIN'] },
 ];
 

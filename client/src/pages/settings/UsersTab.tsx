@@ -18,9 +18,9 @@ const ROLE_ICON: Record<Role, typeof Shield> = {
 
 const ALL_BU = ['PROCUREMENT', 'FREIGHT_FORWARDING', 'LOGISTICS'];
 
-interface UserForm { nom: string; prenom: string; role: string; buAccess: string[]; entitesAccess: string; actif: boolean }
+interface UserForm { nom: string; prenom: string; role: string; buAccess: string[]; entitesAccess: string; tresorerieEntitesAccess: string; actif: boolean }
 
-const emptyForm = (): UserForm => ({ nom: '', prenom: '', role: 'VIEWER', buAccess: [], entitesAccess: '', actif: true });
+const emptyForm = (): UserForm => ({ nom: '', prenom: '', role: 'VIEWER', buAccess: [], entitesAccess: '', tresorerieEntitesAccess: '', actif: true });
 
 function NewUserModal({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
@@ -50,6 +50,7 @@ function NewUserModal({ onClose }: { onClose: () => void }) {
       role: form.role,
       buAccess: form.buAccess,
       entitesAccess: form.entitesAccess ? form.entitesAccess.split(',').map(s => parseInt(s.trim())).filter(Boolean) : [],
+      tresorerieEntitesAccess: form.tresorerieEntitesAccess ? form.tresorerieEntitesAccess.split(',').map(s => parseInt(s.trim())).filter(Boolean) : [],
     });
   };
 
@@ -106,6 +107,13 @@ function NewUserModal({ onClose }: { onClose: () => void }) {
               <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Entity IDs (comma-separated)</label>
               <input value={form.entitesAccess} onChange={e => setForm(f => ({ ...f, entitesAccess: e.target.value }))} className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-[#00A3B4] focus:outline-none" placeholder="e.g. 3, 7, 12" />
               <p className="text-xs text-gray-400 mt-1">Leave empty for access to all entities in selected BUs.</p>
+            </div>
+          )}
+          {form.role === 'VIEWER' && (
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Trésorerie — Entity IDs (comma-separated)</label>
+              <input value={form.tresorerieEntitesAccess} onChange={e => setForm(f => ({ ...f, tresorerieEntitesAccess: e.target.value }))} className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-[#00A3B4] focus:outline-none" placeholder="e.g. 3, 7, 12" />
+              <p className="text-xs text-gray-400 mt-1">Access to the daily treasury entry screen, scoped to these treasury entities. Leave empty for no treasury access.</p>
             </div>
           )}
           <div className="flex gap-3 pt-2">

@@ -24,6 +24,11 @@ import SettingsPage from './pages/settings/SettingsPage';
 import EntitiesTab from './pages/settings/EntitiesTab';
 import EntityReportersTab from './pages/settings/EntityReportersTab';
 import UsersTab from './pages/settings/UsersTab';
+import TresoreriePage from './pages/tresorerie/TresoreriePage';
+import SaisieTresoreriePage from './pages/tresorerie/SaisieTresoreriePage';
+import DashboardTresoreriePage from './pages/tresorerie/DashboardTresoreriePage';
+import DetailBanquesPage from './pages/tresorerie/DetailBanquesPage';
+import ParametresTresoreriePage from './pages/tresorerie/ParametresTresoreriePage';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 5 * 60 * 1000, retry: 1 } },
@@ -62,6 +67,12 @@ export default function App() {
               <Route path="scorecard" element={<ScorecardPage />} />
             </Route>
             <Route path="statistics" element={<StatisticsPage />} />
+            <Route path="tresorerie" element={<TresoreriePage />}>
+              <Route index element={<SaisieTresoreriePage />} />
+              <Route path="dashboard" element={<DashboardTresoreriePage />} />
+              <Route path="banques" element={<DetailBanquesPage />} />
+              <Route path="parametres" element={<ParametresTresoreriePage />} />
+            </Route>
             <Route path="settings" element={<SettingsPage />}>
               <Route index element={<EntitiesTab />} />
               <Route path="reporters" element={<EntityReportersTab />} />

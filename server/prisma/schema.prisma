@@ -119,21 +119,85 @@ model FaitRevenusClients {
 }
 
 model User {
-  id            Int        @id @default(autoincrement())
-  email         String     @unique
-  passwordHash  String     @map("password_hash")
-  nom           String
-  prenom        String
-  role          String     @default("VIEWER")
-  buAccess      String[]   @map("bu_access")
-  entitesAccess Int[]      @map("entites_access")
-  actif         Boolean    @default(true)
-  lastLoginAt   DateTime?  @map("last_login_at")
-  createdAt     DateTime   @default(now()) @map("created_at")
-  updatedAt     DateTime   @updatedAt @map("updated_at")
-  auditLogs     AuditLog[]
+  id                      Int        @id @default(autoincrement())
+  email                   String     @unique
+  passwordHash            String     @map("password_hash")
+  nom                     String
+  prenom                  String
+  role                    String     @default("VIEWER")
+  buAccess                String[]   @map("bu_access")
+  entitesAccess           Int[]      @map("entites_access")
+  tresorerieEntitesAccess Int[]      @map("tresorerie_entites_access") @default([])
+  actif                   Boolean    @default(true)
+  lastLoginAt             DateTime?  @map("last_login_at")
+  createdAt               DateTime   @default(now()) @map("created_at")
+  updatedAt               DateTime   @updatedAt @map("updated_at")
+  auditLogs               AuditLog[]
+  tresorerieSaisies       TresorerieSaisie[]
 
   @@map("users")
+}
+
+// ── Trésorerie journalière ──────────────────────────────────────────────────
+
+model TresorerieEntite {
+  id      Int                @id @default(autoincrement())
+  nom     String             @unique
+  pays    String
+  groupe  String             @map("groupe") // zone géographique: WEST AFRICA / SOUTHERN AFRICA / EUROPE / MAURITIUS
+  actif   Boolean            @default(true)
+  banques TresorerieBanque[]
+
+  @@map("tresorerie_entites")
+}
+
+model TresorerieBanque {
+  id         Int                @id @default(autoincrement())
+  nom        String
+  entiteId   Int                @map("entite_id")
+  entite     TresorerieEntite   @relation(fields: [entiteId], references: [id])
+  typeCompte String             @map("type_compte")
+  devise     String
+  actif      Boolean            @default(true)
+  saisies    TresorerieSaisie[]
+
+  @@unique([entiteId, nom])
+  @@map("tresorerie_banques")
+}
+
+model TresorerieDevise {
+  id        Int      @id @default(autoincrement())
+  code      String   @unique
+  libelle   String?
+  tauxXof   Decimal  @map("taux_xof") @db.Decimal(14, 6)
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("tresorerie_devises")
+}
+
+model TresorerieSaisie {
+  id              Int              @id @default(autoincrement())
+  date            DateTime         @db.Date
+  banqueId        Int              @map("banque_id")
+  banque          TresorerieBanque @relation(fields: [banqueId], references: [id])
+  devise          String
+  tauxXofUtilise  Decimal          @map("taux_xof_utilise") @db.Decimal(14, 6)
+  positionJMoins1 Decimal          @map("position_j_moins_1") @db.Decimal(18, 2)
+  entrees         Decimal          @default(0) @db.Decimal(18, 2)
+  sorties         Decimal          @default(0) @db.Decimal(18, 2)
+  positionJ       Decimal          @map("position_j") @db.Decimal(18, 2)
+  positionBanque  Decimal          @map("position_banque") @db.Decimal(18, 2)
+  caisseJMoins1   Decimal          @default(0) @map("caisse_j_moins_1") @db.Decimal(18, 2)
+  caisseJ         Decimal          @default(0) @map("caisse_j") @db.Decimal(18, 2)
+  commentaire     String?
+  createdById     Int              @map("created_by_id")
+  createdBy       User             @relation(fields: [createdById], references: [id])
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  @@unique([date, banqueId])
+  @@index([date])
+  @@map("tresorerie_saisies")
 }
 
 model AuditLog {

@@ -13,6 +13,18 @@ export function formatEur(value: number, compact = false): string {
   return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(value);
 }
 
+export function formatXof(value: number, compact = false): string {
+  if (compact) {
+    if (Math.abs(value) >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}Md`;
+    if (Math.abs(value) >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  }
+  return `${new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }).format(value)} XOF`;
+}
+
+export function formatNumber(value: number): string {
+  return new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(value);
+}
+
 export function formatPct(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
 }

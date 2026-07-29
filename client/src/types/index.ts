@@ -11,6 +11,7 @@ export interface User {
   role: Role;
   buAccess: string[];
   entitesAccess: number[];
+  tresorerieEntitesAccess: number[];
   actif: boolean;
   lastLoginAt?: string;
 }
@@ -168,4 +169,95 @@ export interface GlobalFilters {
   moisMin: number;
   entiteId?: number;
   mode: 'YTD' | 'MTD';
+}
+
+// ── Trésorerie journalière ───────────────────────────────────────────────────
+
+export interface TresorerieEntite {
+  id: number;
+  nom: string;
+  pays: string;
+  groupe: string;
+  actif: boolean;
+}
+
+export interface TresorerieBanque {
+  id: number;
+  nom: string;
+  entiteId: number;
+  entite?: TresorerieEntite;
+  typeCompte: string;
+  devise: string;
+  actif: boolean;
+}
+
+export interface TresorerieDevise {
+  id: number;
+  code: string;
+  libelle?: string;
+  tauxXof: number;
+  updatedAt: string;
+}
+
+export interface TresorerieSaisieRow {
+  banqueId: number;
+  nomBanque: string;
+  typeCompte: string;
+  devise: string;
+  positionJMoins1: number;
+  entrees: number;
+  sorties: number;
+  positionJ: number;
+  positionBanque: number;
+  caisseJMoins1: number;
+  caisseJ: number;
+  commentaire: string;
+  tauxXofUtilise: number;
+  saisi: boolean;
+}
+
+export interface TresorerieSaisieJourResponse {
+  date: string;
+  entiteId: number;
+  rows: TresorerieSaisieRow[];
+}
+
+export interface TresorerieBanqueLigne {
+  entite: string;
+  pays: string;
+  groupe: string;
+  banque: string;
+  devise: string;
+  positionJ: number;
+  positionBanque: number;
+  positionJXof: number;
+  positionBanqueXof: number;
+  fluxNetXof: number;
+  ecartXof: number;
+}
+
+export interface TresorerieHierarchieNode {
+  label: string;
+  positionJXof: number;
+  children?: TresorerieHierarchieNode[];
+}
+
+export interface TresorerieDashboardResponse {
+  date: string;
+  kpi: {
+    positionTotaleXof: number;
+    fluxNetXof: number;
+    ecartTotalXof: number;
+    nombreEntites: number;
+  };
+  hierarchie: TresorerieHierarchieNode[];
+  banques: TresorerieBanqueLigne[];
+}
+
+export interface TresorerieHistoriquePoint {
+  date: string;
+  positionJ: number;
+  positionJXof: number;
+  positionBanque: number;
+  ecart: number;
 }

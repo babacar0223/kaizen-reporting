@@ -1,11 +1,12 @@
 import { Router } from 'express';
-import { authenticate, authorize } from '../middleware/auth.middleware';
+import { authenticate, authorize, authorizeTresorerieEntite } from '../middleware/auth.middleware';
 import * as auth from '../controllers/auth.controller';
 import * as users from '../controllers/user.controller';
 import * as ref from '../controllers/referentiel.controller';
 import * as pl from '../controllers/pl.controller';
 import * as sales from '../controllers/sales.controller';
 import * as stats from '../controllers/stats.controller';
+import * as treso from '../controllers/tresorerie.controller';
 import { importBu, previewImport, upload } from '../controllers/import.controller';
 
 const router = Router();
@@ -48,6 +49,22 @@ router.get('/admin/export/pl/:bu/:entiteId/:annee', authenticate, pl.exportEntit
 router.get('/admin/template/monthly', authenticate, authorize('SUPER_ADMIN', 'ADMIN'), stats.downloadMonthlyTemplate);
 router.post('/admin/import/preview', authenticate, upload.single('file'), previewImport);
 router.post('/admin/import/:bu', authenticate, authorize('SUPER_ADMIN', 'ADMIN'), upload.single('file'), importBu);
+
+// Trésorerie — référentiel
+router.get('/referentiels/tresorerie/entites', authenticate, treso.getEntites);
+router.post('/referentiels/tresorerie/entites', authenticate, authorize('SUPER_ADMIN', 'ADMIN'), treso.createEntite);
+router.put('/referentiels/tresorerie/entites/:id', authenticate, authorize('SUPER_ADMIN', 'ADMIN'), treso.updateEntite);
+router.get('/referentiels/tresorerie/banques', authenticate, treso.getBanques);
+router.post('/referentiels/tresorerie/banques', authenticate, authorize('SUPER_ADMIN', 'ADMIN'), treso.createBanque);
+router.put('/referentiels/tresorerie/banques/:id', authenticate, authorize('SUPER_ADMIN', 'ADMIN'), treso.updateBanque);
+router.get('/referentiels/tresorerie/devises', authenticate, treso.getDevises);
+router.post('/referentiels/tresorerie/devises', authenticate, authorize('SUPER_ADMIN', 'ADMIN'), treso.upsertDevise);
+
+// Trésorerie — saisie & dashboard
+router.get('/tresorerie/saisie/:date', authenticate, authorizeTresorerieEntite, treso.getSaisieJour);
+router.post('/tresorerie/saisie', authenticate, authorizeTresorerieEntite, treso.batchUpsertSaisie);
+router.get('/tresorerie/dashboard/:date', authenticate, authorize('SUPER_ADMIN', 'ADMIN'), treso.getDashboard);
+router.get('/tresorerie/historique/:banqueId', authenticate, treso.getHistorique);
 
 // Users
 router.get('/admin/users', authenticate, authorize('SUPER_ADMIN'), users.getAll);

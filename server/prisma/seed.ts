@@ -149,6 +149,181 @@ async function main() {
     });
   }
 
+  // ── Trésorerie journalière ─────────────────────────────────────────────────
+  const treasuryEntites = [
+    { nom: 'AFRILOG MALI', pays: 'Mali', groupe: 'WEST AFRICA' },
+    { nom: "AFRILOG CI", pays: "Côte d'Ivoire", groupe: 'WEST AFRICA' },
+    { nom: 'CSTT-AO', pays: 'Sénégal', groupe: 'WEST AFRICA' },
+    { nom: 'AFRILOG SN', pays: 'Sénégal', groupe: 'WEST AFRICA' },
+    { nom: 'AFRICAN LOGISTIC PLATFORM', pays: 'Sénégal', groupe: 'WEST AFRICA' },
+    { nom: 'AFRILOG SA', pays: 'Afrique du Sud', groupe: 'SOUTHERN AFRICA' },
+    { nom: 'AFRILOG MOZ', pays: 'Mozambique', groupe: 'SOUTHERN AFRICA' },
+    { nom: 'AFRILOG GN', pays: 'Guinée', groupe: 'WEST AFRICA' },
+    { nom: 'MULTILOG SA', pays: 'Afrique du Sud', groupe: 'SOUTHERN AFRICA' },
+    { nom: 'AGS', pays: 'Afrique du Sud', groupe: 'SOUTHERN AFRICA' },
+    { nom: 'UFI', pays: 'Belgique', groupe: 'EUROPE' },
+    { nom: 'CTA NV', pays: 'Belgique', groupe: 'EUROPE' },
+    { nom: 'AFRILOG BURKINA', pays: 'Burkina Faso', groupe: 'WEST AFRICA' },
+    { nom: 'MULTIOG CI', pays: "Côte d'Ivoire", groupe: 'WEST AFRICA' },
+    { nom: 'AFRILOG GABON', pays: 'Gabon', groupe: 'WEST AFRICA' },
+    { nom: 'CTA BF', pays: 'Burkina Faso', groupe: 'EUROPE' },
+    { nom: 'CTA SN', pays: 'Sénégal', groupe: 'EUROPE' },
+    { nom: 'IMPAXIS', pays: 'Multi-pays', groupe: 'WEST AFRICA' },
+    { nom: 'PANAFRICAN MARITIME ALLIANCE', pays: 'Multi-pays', groupe: 'WEST AFRICA' },
+    { nom: 'GROUPE AFRICA ALLIANCE', pays: 'Multi-pays', groupe: 'WEST AFRICA' },
+    { nom: 'AFRILOG SIERRA L', pays: 'Sierra Leone', groupe: 'WEST AFRICA' },
+    { nom: 'AFRILOG TANZANIE', pays: 'Tanzanie', groupe: 'SOUTHERN AFRICA' },
+    { nom: 'AFRILOG INTERNATIONAL', pays: 'Multi-pays', groupe: 'MAURITIUS' },
+    { nom: 'MERYT MARITIME SERVICES', pays: 'Mauritus', groupe: 'MAURITIUS' },
+  ];
+
+  const treasuryEntiteMap = new Map<string, number>();
+  for (const e of treasuryEntites) {
+    const rec = await prisma.tresorerieEntite.upsert({
+      where: { nom: e.nom },
+      update: { pays: e.pays, groupe: e.groupe },
+      create: e,
+    });
+    treasuryEntiteMap.set(e.nom, rec.id);
+  }
+
+  // Devise déduite du nom de compte ; à défaut XOF (zone UEMOA). Cas ambigus
+  // corrigés manuellement (ORABANK GB → Gabon = XAF, SKYE BANK → Guinée = GNF,
+  // STD CH DEPOSIT → dépôt ZAR confirmé par Feuil1 du classeur source).
+  // Ces valeurs restent éditables depuis l'écran d'admin.
+  const CURRENCY_TOKENS = ['ZAR', 'USD', 'EUR', 'GBP', 'AUD', 'MUR', 'CNY', 'GNF', 'MZN', 'TZS', 'SLL'];
+  const BANK_CURRENCY_OVERRIDES: Record<string, string> = {
+    'STD CHRTD DEPOSIT': 'ZAR',
+    'ORABANK GB': 'XAF',
+    'SKYE BANK': 'GNF',
+  };
+  function inferDevise(nomBanque: string): string {
+    if (BANK_CURRENCY_OVERRIDES[nomBanque]) return BANK_CURRENCY_OVERRIDES[nomBanque];
+    const upper = nomBanque.toUpperCase();
+    for (const token of CURRENCY_TOKENS) {
+      if (upper.includes(token)) return token;
+    }
+    return 'XOF';
+  }
+
+  const treasuryBanques: Array<{ nom: string; entite: string; typeCompte: string }> = [
+    { nom: 'ECOBANK LOULO', entite: 'AFRILOG MALI', typeCompte: 'Compte Courant' },
+    { nom: 'ECOBANK MORILLA', entite: 'AFRILOG MALI', typeCompte: 'Compte Courant' },
+    { nom: 'Orabank', entite: 'AFRILOG MALI', typeCompte: 'Compte Courant' },
+    { nom: 'ECOBANK CI', entite: 'AFRILOG CI', typeCompte: 'Compte Courant' },
+    { nom: 'ECOBANK DD', entite: 'AFRILOG CI', typeCompte: 'Découvert' },
+    { nom: 'ECOBANK DAT', entite: 'AFRILOG CI', typeCompte: 'Dépôt à Terme' },
+    { nom: 'Orabank CI', entite: 'AFRILOG CI', typeCompte: 'Compte Courant' },
+    { nom: 'ECOBANK CSTT EXPL', entite: 'CSTT-AO', typeCompte: 'Exploitation' },
+    { nom: 'ECOBANK CSTT INVEST', entite: 'CSTT-AO', typeCompte: 'Investissement' },
+    { nom: 'BICIS SN', entite: 'CSTT-AO', typeCompte: 'Compte Courant' },
+    { nom: 'CBAO SN', entite: 'CSTT-AO', typeCompte: 'Compte Courant' },
+    { nom: 'SGBS SN', entite: 'CSTT-AO', typeCompte: 'Compte Courant' },
+    { nom: 'BIS SN', entite: 'CSTT-AO', typeCompte: 'Compte Courant' },
+    { nom: 'SGBS SALAIRES', entite: 'CSTT-AO', typeCompte: 'Salaires' },
+    { nom: 'Orabank SN', entite: 'CSTT-AO', typeCompte: 'Compte Courant' },
+    { nom: 'CREDIT DU SENEGAL', entite: 'CSTT-AO', typeCompte: 'Compte Courant' },
+    { nom: 'ECOBANK SN', entite: 'AFRILOG SN', typeCompte: 'Compte Courant' },
+    { nom: 'CDS', entite: 'AFRILOG SN', typeCompte: 'Compte Courant' },
+    { nom: 'ECOBANK ALP', entite: 'AFRICAN LOGISTIC PLATFORM', typeCompte: 'Compte Courant' },
+    { nom: 'STD CHRTD ZAR', entite: 'AFRILOG SA', typeCompte: 'Compte Courant' },
+    { nom: 'STD CHRTD EUR', entite: 'AFRILOG SA', typeCompte: 'Compte Courant' },
+    { nom: 'STD CHRTD USD', entite: 'AFRILOG SA', typeCompte: 'Compte Courant' },
+    { nom: 'STD CH CURRENT (AUD)', entite: 'AFRILOG SA', typeCompte: 'Compte Courant' },
+    { nom: 'STD CH CURRENT GBP', entite: 'AFRILOG SA', typeCompte: 'Compte Courant' },
+    { nom: 'STD CHRTD DEPOSIT', entite: 'AFRILOG SA', typeCompte: 'Compte Courant' },
+    { nom: 'STD CH CURRENT (MZN) 1', entite: 'AFRILOG MOZ', typeCompte: 'Dépôt à Terme' },
+    { nom: 'STD CH CURRENT (USD)', entite: 'AFRILOG MOZ', typeCompte: 'Compte Courant' },
+    { nom: 'ECOBANK GNF', entite: 'AFRILOG GN', typeCompte: 'Compte Courant' },
+    { nom: 'COFINA GNF', entite: 'AFRILOG GN', typeCompte: 'Compte Courant' },
+    { nom: 'SKYE BANK', entite: 'AFRILOG GN', typeCompte: 'Compte Courant' },
+    { nom: 'NEDBANK CALL ZAR', entite: 'MULTILOG SA', typeCompte: 'Compte Courant' },
+    { nom: 'NEDBANK GUARANTEE (ZAR)', entite: 'MULTILOG SA', typeCompte: 'Compte Courant' },
+    { nom: 'NEDBANK Overdraft (ZAR)', entite: 'MULTILOG SA', typeCompte: 'Compte Courant' },
+    { nom: 'NEDBANK RC FACILITY  (ZAR)', entite: 'MULTILOG SA', typeCompte: 'Compte Call' },
+    { nom: 'NEDBANK CURRENT ZAR', entite: 'MULTILOG SA', typeCompte: 'Compte Courant' },
+    { nom: 'NEDBANK EUR', entite: 'MULTILOG SA', typeCompte: 'Compte Courant' },
+    { nom: 'NEDBANK USD', entite: 'MULTILOG SA', typeCompte: 'Compte Courant' },
+    { nom: 'NEDBANK GBP', entite: 'MULTILOG SA', typeCompte: 'Compte Courant' },
+    { nom: 'NEDBANK CALL ZAR', entite: 'AGS', typeCompte: 'Compte Courant' },
+    { nom: 'NEDBANK CURRENT ZAR', entite: 'AGS', typeCompte: 'Compte Courant' },
+    { nom: 'NEDBANK EUR', entite: 'AGS', typeCompte: 'Compte Courant' },
+    { nom: 'NEDBANK USD', entite: 'AGS', typeCompte: 'Compte Courant' },
+    { nom: 'NEDBANK GBP', entite: 'AGS', typeCompte: 'Compte Courant' },
+    { nom: 'BNP EUR', entite: 'UFI', typeCompte: 'Compte Courant' },
+    { nom: 'KBC EUR', entite: 'UFI', typeCompte: 'Compte Courant' },
+    { nom: 'BNP USD', entite: 'UFI', typeCompte: 'Compte Courant' },
+    { nom: 'BNP EUR', entite: 'CTA NV', typeCompte: 'Compte Courant' },
+    { nom: 'BNP USD', entite: 'CTA NV', typeCompte: 'Compte Courant' },
+    { nom: 'KBC ZAR', entite: 'CTA NV', typeCompte: 'Compte Courant' },
+    { nom: 'KBC EUR', entite: 'CTA NV', typeCompte: 'Compte Courant' },
+    { nom: 'KBC USD', entite: 'CTA NV', typeCompte: 'Compte Courant' },
+    { nom: 'KBC GBP', entite: 'CTA NV', typeCompte: 'Compte Courant' },
+    { nom: 'ECOBANK BF', entite: 'AFRILOG BURKINA', typeCompte: 'Compte Courant' },
+    { nom: 'ORABANK CI', entite: 'MULTIOG CI', typeCompte: 'Compte Courant' },
+    { nom: 'ORABANK GB', entite: 'AFRILOG GABON', typeCompte: 'Compte Courant' },
+    { nom: 'BICIAB', entite: 'CTA BF', typeCompte: 'Compte Courant' },
+    { nom: 'Crédit International', entite: 'CTA SN', typeCompte: 'Compte Courant' },
+    { nom: 'Sunu Bank', entite: 'CTA SN', typeCompte: 'Compte Courant' },
+    { nom: 'Société Générale', entite: 'CTA SN', typeCompte: 'Compte Courant' },
+    { nom: 'ORABANK SOUS COMPTE', entite: 'CTA SN', typeCompte: 'Compte Courant' },
+    { nom: 'ORABANK', entite: 'CTA SN', typeCompte: 'Compte Courant' },
+    { nom: 'IMPAXIS', entite: 'IMPAXIS', typeCompte: 'Compte Courant' },
+    { nom: 'ORABANK', entite: 'PANAFRICAN MARITIME ALLIANCE', typeCompte: 'Compte Courant' },
+    { nom: 'AFRICA ALLIANCE MALI', entite: 'GROUPE AFRICA ALLIANCE', typeCompte: 'Compte Courant' },
+    { nom: 'AFRICA ALLIANCE CI', entite: 'GROUPE AFRICA ALLIANCE', typeCompte: 'Compte Courant' },
+    { nom: 'AFRICA ALLIANCE BN', entite: 'GROUPE AFRICA ALLIANCE', typeCompte: 'Compte Courant' },
+    { nom: 'AFRICA ALLIANCE SN', entite: 'GROUPE AFRICA ALLIANCE', typeCompte: 'Compte Courant' },
+    { nom: 'PETTY CASH', entite: 'GROUPE AFRICA ALLIANCE', typeCompte: 'Caisse' },
+    { nom: 'SLL', entite: 'AFRILOG SIERRA L', typeCompte: 'Compte Courant' },
+    { nom: 'USD', entite: 'AFRILOG SIERRA L', typeCompte: 'Compte Courant' },
+    { nom: 'TZS', entite: 'AFRILOG TANZANIE', typeCompte: 'Compte Courant' },
+    { nom: 'USD', entite: 'AFRILOG TANZANIE', typeCompte: 'Compte Courant' },
+    { nom: 'MCB EUR', entite: 'AFRILOG INTERNATIONAL', typeCompte: 'Compte Courant' },
+    { nom: 'MCB USD', entite: 'AFRILOG INTERNATIONAL', typeCompte: 'Compte Courant' },
+    { nom: 'MCB MUR', entite: 'AFRILOG INTERNATIONAL', typeCompte: 'Compte Courant' },
+    { nom: 'MCB GBP', entite: 'AFRILOG INTERNATIONAL', typeCompte: 'Compte Courant' },
+    { nom: 'MCB CNY', entite: 'AFRILOG INTERNATIONAL', typeCompte: 'Compte Courant' },
+    { nom: 'MCB EUR', entite: 'MERYT MARITIME SERVICES', typeCompte: 'Compte Courant' },
+    { nom: 'MCB USD', entite: 'MERYT MARITIME SERVICES', typeCompte: 'Compte Courant' },
+  ];
+
+  for (const b of treasuryBanques) {
+    const entiteId = treasuryEntiteMap.get(b.entite);
+    if (!entiteId) continue;
+    await prisma.tresorerieBanque.upsert({
+      where: { entiteId_nom: { entiteId, nom: b.nom } },
+      update: { typeCompte: b.typeCompte, devise: inferDevise(b.nom) },
+      create: { nom: b.nom, entiteId, typeCompte: b.typeCompte, devise: inferDevise(b.nom) },
+    });
+  }
+
+  // Taux de change au XOF — valeurs relevées dans Feuil1 du classeur source ;
+  // à réactualiser ensuite depuis l'écran d'admin. Les devises sans taux connu
+  // dans le classeur sont créées avec un taux placeholder (1) à corriger.
+  const treasuryDevises = [
+    { code: 'XOF', libelle: 'Franc CFA (UEMOA)', tauxXof: 1 },
+    { code: 'USD', libelle: 'Dollar américain', tauxXof: 555.56 },
+    { code: 'EUR', libelle: 'Euro', tauxXof: 655.96 },
+    { code: 'GBP', libelle: 'Livre sterling', tauxXof: 754.09 },
+    { code: 'ZAR', libelle: 'Rand sud-africain', tauxXof: 33.61 },
+    { code: 'AUD', libelle: 'Dollar australien', tauxXof: 398.10 },
+    { code: 'MUR', libelle: 'Roupie mauricienne', tauxXof: 11.96 },
+    { code: 'CNY', libelle: 'Yuan chinois', tauxXof: 81.96 },
+    { code: 'GNF', libelle: 'Franc guinéen', tauxXof: 1 },
+    { code: 'XAF', libelle: 'Franc CFA (CEMAC)', tauxXof: 1 },
+    { code: 'MZN', libelle: 'Metical mozambicain', tauxXof: 1 },
+    { code: 'TZS', libelle: 'Shilling tanzanien', tauxXof: 1 },
+    { code: 'SLL', libelle: 'Leone sierra-léonais', tauxXof: 1 },
+  ];
+  for (const d of treasuryDevises) {
+    await prisma.tresorerieDevise.upsert({
+      where: { code: d.code },
+      update: {},
+      create: d,
+    });
+  }
+
   // ── Super Admin ────────────────────────────────────────────────────────────
   const hash = await bcrypt.hash('Admin@2026!', 12);
   await prisma.user.upsert({

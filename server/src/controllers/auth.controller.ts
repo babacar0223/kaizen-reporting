@@ -30,6 +30,7 @@ export async function login(req: Request, res: Response): Promise<void> {
     role: user.role,
     buAccess: user.buAccess,
     entitesAccess: user.entitesAccess,
+    tresorerieEntitesAccess: user.tresorerieEntitesAccess,
   };
   const token = jwt.sign(payload, process.env.JWT_SECRET!, {
     expiresIn: (process.env.JWT_EXPIRES_IN || '8h') as unknown as number,
@@ -44,6 +45,7 @@ export async function login(req: Request, res: Response): Promise<void> {
       role: user.role,
       buAccess: user.buAccess,
       entitesAccess: user.entitesAccess,
+      tresorerieEntitesAccess: user.tresorerieEntitesAccess,
     },
   });
 }
@@ -51,7 +53,7 @@ export async function login(req: Request, res: Response): Promise<void> {
 export async function me(req: AuthRequest, res: Response): Promise<void> {
   const user = await prisma.user.findUnique({
     where: { id: req.user!.userId },
-    select: { id: true, email: true, nom: true, prenom: true, role: true, buAccess: true, entitesAccess: true, lastLoginAt: true },
+    select: { id: true, email: true, nom: true, prenom: true, role: true, buAccess: true, entitesAccess: true, tresorerieEntitesAccess: true, lastLoginAt: true },
   });
   res.json(user);
 }

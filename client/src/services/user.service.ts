@@ -9,6 +9,7 @@ export interface CreateUserDto {
   role: string;
   buAccess: string[];
   entitesAccess: number[];
+  tresorerieEntitesAccess?: number[];
 }
 
 export interface UpdateUserDto {
@@ -17,6 +18,7 @@ export interface UpdateUserDto {
   role?: string;
   buAccess?: string[];
   entitesAccess?: number[];
+  tresorerieEntitesAccess?: number[];
   actif?: boolean;
   password?: string;
 }
