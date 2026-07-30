@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: kaizen_reporting_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: kaizen_reporting
+    ports:
+      - "5433:5432"
+    volumes:
+      - kaizen_pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  kaizen_pg_data:
