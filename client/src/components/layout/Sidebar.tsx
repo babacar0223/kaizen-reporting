@@ -1,42 +1,34 @@
 import { useState } from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, BarChart3, TrendingUp, Settings, Upload, ChevronRight, LogOut, Building2, Activity, Wallet } from 'lucide-react';
+import { LayoutDashboard, BarChart3, TrendingUp, Settings, Upload, ChevronRight, LogOut, Activity, Wallet, Users } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { useFiltersStore } from '../../stores/filters.store';
 import { useAuthStore } from '../../stores/auth.store';
 
-const BU_CONFIG = [
-  { key: 'PROCUREMENT', label: 'Procurement', color: '#1B5E8B' },
-  { key: 'FREIGHT_FORWARDING', label: 'Freight Fwd', color: '#4A1E8B' },
-  { key: 'LOGISTICS', label: 'Logistics', color: '#0E6B5E' },
-];
+interface NavItem { to: string; label: string; icon: typeof LayoutDashboard; roles?: string[]; hideForViewer?: boolean; needsTreasury?: boolean }
 
-const NAV_ITEMS = [
-  { to: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/admin', label: 'Import', icon: Upload, roles: ['SUPER_ADMIN', 'ADMIN'] },
+const NAV_ITEMS: NavItem[] = [
+  { to: '/', label: 'Dashboard', icon: LayoutDashboard, hideForViewer: true },
+  { to: '/admin', label: 'Import', icon: Upload },
   { to: '/figures', label: 'Figures', icon: BarChart3 },
   { to: '/charts', label: 'Charts', icon: TrendingUp },
   { to: '/statistics', label: 'Statistics', icon: Activity },
-  { to: '/tresorerie', label: 'Trésorerie', icon: Wallet },
+  { to: '/clients', label: 'Clients', icon: Users },
+  { to: '/tresorerie', label: 'Trésorerie', icon: Wallet, needsTreasury: true },
   { to: '/settings', label: 'Settings', icon: Settings, roles: ['SUPER_ADMIN'] },
 ];
 
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
-  const { bu, setBu } = useFiltersStore();
   const { user, logout } = useAuthStore();
   const isViewer = user?.role === 'VIEWER';
-  const activeBu = BU_CONFIG.find(b => b.key === bu) || BU_CONFIG[0];
 
   const visibleItems = NAV_ITEMS.filter(item => {
-    if (!item.roles) return true;
-    return item.roles.includes(user?.role || '');
+    if (item.roles && !item.roles.includes(user?.role || '')) return false;
+    if (isViewer && item.hideForViewer) return false;
+    // Trésorerie : cachée pour un VIEWER sans entité de trésorerie autorisée.
+    if (item.needsTreasury && isViewer && !(user?.tresorerieEntitesAccess?.length)) return false;
+    return true;
   });
-
-  // For VIEWER: only show BUs they have access to
-  const visibleBus = isViewer && user?.buAccess?.length
-    ? BU_CONFIG.filter(b => user.buAccess.includes(b.key))
-    : BU_CONFIG;
 
   return (
     <aside className={cn('flex flex-col h-screen bg-[#1B3A6B] text-white transition-all duration-300 border-r border-white/10', collapsed ? 'w-16' : 'w-60')}>
@@ -44,9 +36,7 @@ export default function Sidebar() {
       <div className="flex items-center justify-between p-4 border-b border-white/10">
         {!collapsed && (
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-7 h-7 rounded-md bg-[#00A3B4] flex items-center justify-center flex-shrink-0">
-              <span className="text-white font-bold text-xs">C</span>
-            </div>
+            <img src="/CSTT-AO.png" alt="CSTT AO" className="w-8 h-8 rounded-md object-contain flex-shrink-0 bg-white/10" />
             <div className="min-w-0">
               <p className="text-xs font-bold text-white leading-tight truncate">CSTT AO</p>
               <p className="text-xs text-white/40 truncate">Reporting Group</p>
@@ -57,25 +47,6 @@ export default function Sidebar() {
           <ChevronRight className={cn('w-4 h-4 transition-transform', collapsed ? '' : 'rotate-180')} />
         </button>
       </div>
-
-      {/* BU Selector — hidden for VIEWER with single BU */}
-      {(!isViewer || visibleBus.length > 1) && (
-        <div className="p-3 border-b border-white/10">
-          {visibleBus.map(b => (
-            <button
-              key={b.key}
-              onClick={() => !isViewer && setBu(b.key)}
-              className={cn(
-                'w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs font-medium mb-1 transition-all',
-                b.key === bu ? 'bg-white/20' : isViewer ? 'opacity-50 cursor-default' : 'hover:bg-white/10 text-white/60'
-              )}
-            >
-              <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: b.color }} />
-              {!collapsed && <span>{b.label}</span>}
-            </button>
-          ))}
-        </div>
-      )}
 
       {/* Navigation */}
       <nav className="flex-1 p-3 space-y-1">
@@ -92,14 +63,8 @@ export default function Sidebar() {
         ))}
       </nav>
 
-      {/* Active BU indicator + User */}
+      {/* User */}
       <div className="p-3 border-t border-white/10">
-        {!collapsed && (
-          <div className="flex items-center gap-2 mb-3 px-2 py-1.5 rounded-lg" style={{ backgroundColor: activeBu.color + '33' }}>
-            <Building2 className="w-3.5 h-3.5 flex-shrink-0" style={{ color: activeBu.color }} />
-            <span className="text-xs font-medium text-white/80">{activeBu.label}</span>
-          </div>
-        )}
         <div className="flex items-center gap-2 px-2">
           <div className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center text-xs font-bold flex-shrink-0">
             {user?.prenom?.[0]}{user?.nom?.[0]}

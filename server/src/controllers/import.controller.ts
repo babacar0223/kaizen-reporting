@@ -23,21 +23,26 @@ export async function importBu(req: AuthRequest, res: Response): Promise<void> {
   const month = parseInt(mois);
   const buffer = req.file.buffer;
   const userId = req.user!.userId;
+  const user = req.user!;
+  const isViewer = user.role === 'VIEWER';
+  const allowedEntiteIds = isViewer && user.entitesAccess.length > 0 ? user.entitesAccess : undefined;
 
   let result;
   switch ((bu as string).toUpperCase()) {
     case 'PROCUREMENT':
+      if (isViewer) { res.status(403).json({ message: 'Import multi-entités réservé aux administrateurs' }); return; }
       result = await importProcurementPl(buffer, year, month, userId);
       break;
     case 'FREIGHT_FORWARDING':
+      if (isViewer) { res.status(403).json({ message: 'Import multi-entités réservé aux administrateurs' }); return; }
       result = await importFreightForwardingPl(buffer, year, month, userId);
       break;
     case 'LOGISTICS':
       if (!nomCourt) { res.status(400).json({ message: 'nomCourt requis pour Logistics' }); return; }
-      result = await importLogisticsEntite(buffer, year, month, nomCourt, userId);
+      result = await importLogisticsEntite(buffer, year, month, nomCourt, userId, allowedEntiteIds);
       break;
     case 'TEMPLATE':
-      result = await importPlTemplate(buffer, year, month, userId);
+      result = await importPlTemplate(buffer, year, month, userId, allowedEntiteIds);
       break;
     default:
       res.status(400).json({ message: `BU "${bu}" non supportée pour l'import automatique` });

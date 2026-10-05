@@ -5,12 +5,20 @@ import { useAuthStore } from '../../stores/auth.store';
 import type { DimEntite, DimBu } from '../../types';
 import { Edit2, Check, X, Plus, Trash2, AlertTriangle } from 'lucide-react';
 
-const CURRENCIES = ['EUR', 'CFA', 'USD', 'GBP', 'MAD', 'XOF'];
+const CURRENCIES = ['EUR', 'CFA', 'USD', 'GBP', 'MAD', 'XOF', 'ZAR'];
 
 const BU_BADGE: Record<string, string> = {
   PROC: 'bg-blue-100 text-blue-700',
   FF:   'bg-purple-100 text-purple-700',
   LOG:  'bg-emerald-100 text-emerald-700',
+};
+
+// Entités "consolidées" — miroir de server/src/lib/entiteGroups.ts. Une entité fille n'est jamais
+// importée directement : ses chiffres remontent automatiquement dans son entité parente. Affichées
+// en italique avec un renvoi vers le parent pour qu'on ne les confonde pas avec des entités à part.
+const SUB_ENTITE_PARENT: Record<number, string> = {
+  22: 'AFRILOG INTL',
+  23: 'AFRILOG INTL',
 };
 
 interface EditRow {
@@ -187,8 +195,15 @@ export default function EntitiesTab() {
                     </>
                   ) : (
                     <>
-                      <td className="px-3 py-2.5 font-semibold text-gray-800">{e.nomCourt}</td>
-                      <td className="px-3 py-2.5 text-gray-600">{e.nom}</td>
+                      <td className={`px-3 py-2.5 font-semibold text-gray-800 ${SUB_ENTITE_PARENT[e.id] ? 'italic' : ''}`}>{e.nomCourt}</td>
+                      <td className={`px-3 py-2.5 text-gray-600 ${SUB_ENTITE_PARENT[e.id] ? 'italic' : ''}`}>
+                        {e.nom}
+                        {SUB_ENTITE_PARENT[e.id] && (
+                          <span className="ml-2 inline-block px-1.5 py-0.5 rounded-full text-[10px] font-semibold not-italic bg-indigo-50 text-indigo-600" title={`Sous-entité de ${SUB_ENTITE_PARENT[e.id]} — jamais importée directement, ses chiffres remontent automatiquement dans l'entité consolidée`}>
+                            sub-entity of {SUB_ENTITE_PARENT[e.id]}
+                          </span>
+                        )}
+                      </td>
                       <td className="px-3 py-2.5">
                         <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${BU_BADGE[e.bu?.nomCourt ?? ''] ?? 'bg-gray-100 text-gray-600'}`}>{e.bu?.nomCourt}</span>
                       </td>
@@ -238,6 +253,13 @@ export default function EntitiesTab() {
               ))}
             </tbody>
           </table>
+        </div>
+        <div className="px-5 py-2.5 border-t border-gray-100 bg-gray-50/50">
+          <p className="text-[11px] text-gray-400">
+            Conv. Rate is the default fallback used at import when a template leaves a rate cell blank — each monthly
+            import can still override Actuals / Budget / Prior Year with its own rate (row 2 of the "PL" sheet) when
+            they differ from this default.
+          </p>
         </div>
       </div>
     </div>

@@ -114,16 +114,43 @@ export interface SalesResponse {
   data: FaitRevenusClients[];
 }
 
+export interface ClientOverviewRow {
+  entiteId: number;
+  entite: string;
+  clientNom: string;
+  groupe: string;
+  revActual: number;
+  revTarget: number;
+  revTargetAnnual: number;
+  gmActual: number;
+  gmTarget: number;
+  achievement: number | null;
+  marginRate: number | null;
+  monthly: Array<{ mois: number; revActual: number; gmActual: number }>;
+}
+
+export interface ClientsOverviewResponse {
+  bu: string;
+  annee: number;
+  mois: number;
+  clients: ClientOverviewRow[];
+}
+
 export interface ImportResult {
   created: number;
   updated: number;
   errors: string[];
+  parseWarnings?: string[];
   detectedMonths?: number[];
   referenceMois?: number;
   entiteId?: number;
   bu?: string;
   entiteNom?: string;
   annee?: number;
+  devise?: string;
+  tauxDevise?: number;         // taux Actuals (mois en cours)
+  tauxDeviseBudget?: number;   // taux Budget, si différent (colonne C)
+  tauxDeviseN1?: number;       // taux YTD N-1, si différent (colonne B)
 }
 
 export interface PreviewLine {
@@ -135,20 +162,27 @@ export interface PreviewLine {
 
 export interface ClientPreviewRow {
   clientNom: string;
-  type: 'REVENUE' | 'MARGIN';
-  mtd: number;
-  ytd: number;
-  budget: number;
-  marginRate: number | null;
-  share: number | null;
+  ventesYtd: number;
+  cosYtd: number;
+  margeYtd: number;
+  tauxMarge: number | null;
+  budgetAnnuel: number;
+  months: number[];
 }
 
 export interface PreviewResult {
   errors: string[];
+  mandatoryWarnings?: string[];
+  parseWarnings?: string[];
+  clientCols?: { ventes: string; cos: string; budget: string; budgetFound: boolean };
   bu?: string;
   entiteNom?: string;
   annee?: number;
   isCfa?: boolean;
+  devise?: string;
+  tauxDevise?: number;
+  tauxDeviseBudget?: number;
+  tauxDeviseN1?: number;
   detectedMonths?: number[];
   referenceMois?: number;
   lines: PreviewLine[];
@@ -199,6 +233,13 @@ export interface TresorerieDevise {
   updatedAt: string;
 }
 
+export interface TresorerieMouvement {
+  id?: number;
+  type: 'ENTREE' | 'SORTIE';
+  montant: number;
+  libelle: string;
+}
+
 export interface TresorerieSaisieRow {
   banqueId: number;
   nomBanque: string;
@@ -214,6 +255,7 @@ export interface TresorerieSaisieRow {
   commentaire: string;
   tauxXofUtilise: number;
   saisi: boolean;
+  mouvements: TresorerieMouvement[];
 }
 
 export interface TresorerieSaisieJourResponse {

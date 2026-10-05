@@ -1,10 +1,14 @@
-import { useQuery } from '@tanstack/react-query';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { useOutletContext } from 'react-router-dom';
+import { useQueries } from '@tanstack/react-query';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList } from 'recharts';
 import { useFiltersStore } from '../../stores/filters.store';
 import { plService } from '../../services/pl.service';
 import { formatEur } from '../../lib/utils';
+import { BU_OPTIONS } from '../../components/layout/ScopeSelector';
+import type { ChartsScopeContext } from './ChartsPage';
 
 const MONTHS_EN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const ALL_BUS = BU_OPTIONS.map(b => b.value);
 const STEPS = [
   { label: 'Revenue', from: 'Revenue', positive: true },
   { label: '− COS', from: 'Cost of Sales', positive: false },
@@ -16,16 +20,28 @@ const STEPS = [
 ];
 
 export default function WaterfallPage() {
-  const { bu, annee, mois } = useFiltersStore();
+  const { scope } = useOutletContext<ChartsScopeContext>();
+  const { annee, mois } = useFiltersStore();
+  const bus = scope === 'GROUP' ? ALL_BUS : [scope];
 
-  const { data, isLoading } = useQuery({
-    queryKey: ['kpi', bu, annee, mois],
-    queryFn: () => plService.getKpiBu(bu, annee, mois),
+  const results = useQueries({
+    queries: bus.map(b => ({
+      queryKey: ['kpi', b, annee, mois],
+      queryFn: () => plService.getKpiBu(b, annee, mois),
+    })),
   });
 
-  if (isLoading) return <div className="text-center py-12 text-gray-500 text-sm">Loading�</div>;
+  if (results.some(r => r.isLoading)) return <div className="text-center py-12 text-gray-500 text-sm">Loading…</div>;
 
-  const kpis = data?.kpis || {};
+  const kpis: Record<string, Record<string, number>> = {};
+  for (const r of results) {
+    for (const [line, vals] of Object.entries(r.data?.kpis || {})) {
+      if (!kpis[line]) kpis[line] = {};
+      for (const [type, v] of Object.entries(vals)) {
+        kpis[line][type] = (kpis[line][type] || 0) + Number(v);
+      }
+    }
+  }
   const revenue = kpis['Revenue']?.['ACTUALS'] || 0;
 
   let running = 0;
@@ -46,8 +62,8 @@ export default function WaterfallPage() {
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-base font-semibold text-gray-800">P&L Waterfall (Waterfall)</h2>
-        <p className="text-xs text-gray-400">BU {bu} · YTD {MONTHS_EN[mois - 1]} {annee}</p>
+        <h2 className="text-base font-semibold text-gray-800">P&L Waterfall</h2>
+        <p className="text-xs text-gray-400">{scope === 'GROUP' ? 'Groupe' : scope} · YTD {MONTHS_EN[mois - 1]} {annee}</p>
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
@@ -75,6 +91,7 @@ export default function WaterfallPage() {
               {chartData.map((entry, i) => (
                 <Cell key={i} fill={entry.isSolde ? '#00A3B4' : entry.positive ? '#107C10' : '#C42B1C'} />
               ))}
+              <LabelList dataKey="value" position="top" formatter={(v) => formatEur(Number(v), true)} style={{ fontSize: 9, fontWeight: 700, fill: '#374151' }} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>

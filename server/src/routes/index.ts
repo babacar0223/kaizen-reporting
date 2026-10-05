@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authenticate, authorize, authorizeTresorerieEntite } from '../middleware/auth.middleware';
+import { authenticate, authorize, authorizeBu, authorizeTresorerieEntite } from '../middleware/auth.middleware';
 import * as auth from '../controllers/auth.controller';
 import * as users from '../controllers/user.controller';
 import * as ref from '../controllers/referentiel.controller';
@@ -19,6 +19,7 @@ router.put('/auth/password', authenticate, auth.changePassword);
 // Référentiels
 router.get('/referentiels/bu', authenticate, ref.getAllBu);
 router.get('/referentiels/entites', authenticate, ref.getAllEntites);
+router.get('/referentiels/annees-disponibles', authenticate, ref.getAnneesDisponibles);
 router.post('/referentiels/entites', authenticate, authorize('SUPER_ADMIN', 'ADMIN'), ref.createEntite);
 router.put('/referentiels/entites/:id', authenticate, authorize('SUPER_ADMIN', 'ADMIN'), ref.updateEntite);
 router.delete('/referentiels/entites/:id', authenticate, authorize('SUPER_ADMIN'), ref.deleteEntite);
@@ -27,28 +28,32 @@ router.post('/referentiels/clients', authenticate, authorize('SUPER_ADMIN', 'ADM
 router.post('/referentiels/sous-clients', authenticate, authorize('SUPER_ADMIN', 'ADMIN'), ref.createSousClient);
 router.get('/referentiels/lignes-pl', authenticate, ref.getLignesPl);
 router.post('/referentiels/lignes-pl', authenticate, authorize('SUPER_ADMIN'), ref.createLignePl);
+router.get('/referentiels/client-groupes', authenticate, ref.getClientGroupes);
+router.put('/referentiels/client-groupes', authenticate, authorize('SUPER_ADMIN', 'ADMIN'), ref.putClientGroupe);
+router.delete('/referentiels/client-groupes/:id', authenticate, authorize('SUPER_ADMIN', 'ADMIN'), ref.deleteClientGroupe);
 
 // P&L
-router.get('/pl/:bu/:annee/:mois', authenticate, pl.getPlBu);
-router.get('/pl/:bu/:entiteId/:annee/:mois', authenticate, pl.getPlEntite);
-router.get('/kpi/bu/:bu/:annee/:mois', authenticate, pl.getKpiBu);
-router.post('/admin/pl', authenticate, authorize('SUPER_ADMIN', 'ADMIN'), pl.upsertPl);
-router.post('/admin/pl/batch', authenticate, authorize('SUPER_ADMIN', 'ADMIN'), pl.batchUpsertPl);
+router.get('/pl/:bu/:annee/:mois', authenticate, authorizeBu, pl.getPlBu);
+router.get('/pl/:bu/:entiteId/:annee/:mois', authenticate, authorizeBu, pl.getPlEntite);
+router.get('/kpi/bu/:bu/:annee/:mois', authenticate, authorizeBu, pl.getKpiBu);
+router.post('/admin/pl', authenticate, pl.upsertPl);
+router.post('/admin/pl/batch', authenticate, pl.batchUpsertPl);
 router.delete('/admin/pl/entity/:entiteId/year/:annee', authenticate, authorize('SUPER_ADMIN', 'ADMIN'), pl.resetEntityPlData);
 
 // Sales & Margin
-router.get('/sales/:bu/:entiteId/:annee/:mois', authenticate, sales.getSales);
-router.get('/sales/consolidation/:bu/:annee/:mois', authenticate, sales.getConsolidationClients);
-router.post('/admin/sales', authenticate, authorize('SUPER_ADMIN', 'ADMIN'), sales.upsertSales);
+router.get('/sales/:bu/:entiteId/:annee/:mois', authenticate, authorizeBu, sales.getSales);
+router.get('/sales/consolidation/:bu/:annee/:mois', authenticate, authorizeBu, sales.getConsolidationClients);
+router.get('/clients/overview/:bu/:annee', authenticate, authorizeBu, sales.getClientsOverview);
+router.post('/admin/sales', authenticate, sales.upsertSales);
 
 // Statistics
-router.get('/stats/:bu/:annee/:mois', authenticate, stats.getStats);
-router.get('/admin/export/pl/:bu/:entiteId/:annee', authenticate, pl.exportEntityPl);
+router.get('/stats/:bu/:annee/:mois', authenticate, authorizeBu, stats.getStats);
+router.get('/admin/export/pl/:bu/:entiteId/:annee', authenticate, authorizeBu, pl.exportEntityPl);
 
 // Import Excel + Template download
-router.get('/admin/template/monthly', authenticate, authorize('SUPER_ADMIN', 'ADMIN'), stats.downloadMonthlyTemplate);
+router.get('/admin/template/monthly', authenticate, stats.downloadMonthlyTemplate);
 router.post('/admin/import/preview', authenticate, upload.single('file'), previewImport);
-router.post('/admin/import/:bu', authenticate, authorize('SUPER_ADMIN', 'ADMIN'), upload.single('file'), importBu);
+router.post('/admin/import/:bu', authenticate, upload.single('file'), importBu);
 
 // Trésorerie — référentiel
 router.get('/referentiels/tresorerie/entites', authenticate, treso.getEntites);
@@ -59,6 +64,7 @@ router.post('/referentiels/tresorerie/banques', authenticate, authorize('SUPER_A
 router.put('/referentiels/tresorerie/banques/:id', authenticate, authorize('SUPER_ADMIN', 'ADMIN'), treso.updateBanque);
 router.get('/referentiels/tresorerie/devises', authenticate, treso.getDevises);
 router.post('/referentiels/tresorerie/devises', authenticate, authorize('SUPER_ADMIN', 'ADMIN'), treso.upsertDevise);
+router.post('/referentiels/tresorerie/devises/refresh', authenticate, authorize('SUPER_ADMIN', 'ADMIN'), treso.refreshDevises);
 
 // Trésorerie — saisie & dashboard
 router.get('/tresorerie/saisie/:date', authenticate, authorizeTresorerieEntite, treso.getSaisieJour);

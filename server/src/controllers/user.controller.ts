@@ -33,12 +33,32 @@ export async function create(req: Request, res: Response): Promise<void> {
 }
 
 export async function update(req: Request, res: Response): Promise<void> {
+  const id = parseInt(String(req.params.id));
   const { email, nom, prenom, role, buAccess, entitesAccess, tresorerieEntitesAccess, actif, password } = req.body;
-  const data: Record<string, unknown> = { nom, prenom, role, buAccess, entitesAccess, tresorerieEntitesAccess, actif };
-  if (email) data.email = email;
-  if (password) data.passwordHash = await bcrypt.hash(password, 12);
+
+  // N'applique que les champs réellement fournis (permet les mises à jour partielles).
+  const data: Record<string, unknown> = {};
+  if (nom !== undefined) data.nom = nom;
+  if (prenom !== undefined) data.prenom = prenom;
+  if (role !== undefined) data.role = role;
+  if (buAccess !== undefined) data.buAccess = buAccess;
+  if (entitesAccess !== undefined) data.entitesAccess = entitesAccess;
+  if (tresorerieEntitesAccess !== undefined) data.tresorerieEntitesAccess = tresorerieEntitesAccess;
+  if (actif !== undefined) data.actif = actif;
+
+  if (email) {
+    const norm = String(email).trim().toLowerCase();
+    const clash = await prisma.user.findFirst({ where: { email: norm, NOT: { id } }, select: { id: true } });
+    if (clash) { res.status(409).json({ message: 'Cet email est déjà utilisé par un autre utilisateur' }); return; }
+    data.email = norm;
+  }
+  if (password) {
+    if (String(password).length < 6) { res.status(400).json({ message: 'Le mot de passe doit faire au moins 6 caractères' }); return; }
+    data.passwordHash = await bcrypt.hash(password, 12);
+  }
+
   const user = await prisma.user.update({
-    where: { id: parseInt(String(req.params.id)) },
+    where: { id },
     data,
     select: { id: true, email: true, nom: true, prenom: true, role: true, buAccess: true, entitesAccess: true, tresorerieEntitesAccess: true, actif: true },
   });

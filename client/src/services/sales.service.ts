@@ -1,5 +1,5 @@
 import api from '../lib/api';
-import type { SalesResponse } from '../types';
+import type { SalesResponse, ClientsOverviewResponse } from '../types';
 
 export const salesService = {
   getSales: (bu: string, entiteId: number, annee: number, mois: number) =>
@@ -7,4 +7,7 @@ export const salesService = {
 
   upsertSales: (rows: object[]) =>
     api.post('/admin/sales', { rows }).then(r => r.data),
+
+  getClientsOverview: (bu: string, annee: number, mois?: number) =>
+    api.get<ClientsOverviewResponse>(`/clients/overview/${bu}/${annee}`, { params: mois ? { mois } : {} }).then(r => r.data),
 };

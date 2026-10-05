@@ -57,6 +57,21 @@ model DimSousClient {
   @@map("dim_sous_clients")
 }
 
+// Correspondance nom de client (dénormalisé) → groupe de consolidation (ex. Barrick, Tongon).
+// Géré dans la plateforme (écran Admin → Groupes clients). Client non mappé ⇒ "Autres".
+model DimClientGroupe {
+  id        Int      @id @default(autoincrement())
+  entiteId  Int      @map("entite_id")
+  clientNom String   @map("client_nom")
+  groupe    String
+  ordre     Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([entiteId, clientNom])
+  @@map("dim_client_groupes")
+}
+
 model DimLignePl {
   id             Int      @id @default(autoincrement())
   nom            String   @unique
@@ -194,10 +209,24 @@ model TresorerieSaisie {
   createdBy       User             @relation(fields: [createdById], references: [id])
   createdAt       DateTime         @default(now()) @map("created_at")
   updatedAt       DateTime         @updatedAt @map("updated_at")
+  mouvements      TresorerieMouvement[]
 
   @@unique([date, banqueId])
   @@index([date])
   @@map("tresorerie_saisies")
+}
+
+model TresorerieMouvement {
+  id        Int              @id @default(autoincrement())
+  saisieId  Int              @map("saisie_id")
+  saisie    TresorerieSaisie @relation(fields: [saisieId], references: [id], onDelete: Cascade)
+  type      String           // 'ENTREE' | 'SORTIE'
+  montant   Decimal          @db.Decimal(18, 2)
+  libelle   String?
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  @@index([saisieId])
+  @@map("tresorerie_mouvements")
 }
 
 model AuditLog {

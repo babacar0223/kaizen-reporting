@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { tresorerieService } from '../../services/tresorerie.service';
 import type { TresorerieEntite, TresorerieBanque, TresorerieDevise } from '../../types';
-import { Plus, Check, X, Edit2 } from 'lucide-react';
+import { Plus, Check, X, Edit2, RefreshCw } from 'lucide-react';
 
 const input = 'border border-gray-200 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-[#00A3B4] focus:outline-none';
 
@@ -14,18 +14,50 @@ function DevisesSection() {
   const [newCode, setNewCode] = useState('');
   const [newLibelle, setNewLibelle] = useState('');
   const [newTaux, setNewTaux] = useState('1');
+  const [refreshResult, setRefreshResult] = useState<{ updated: string[]; notCovered: string[] } | null>(null);
 
   const mutation = useMutation({
     mutationFn: (data: object) => tresorerieService.upsertDevise(data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tresorerie-devises'] }),
   });
 
+  const refreshMutation = useMutation({
+    mutationFn: tresorerieService.refreshDevises,
+    onSuccess: (result) => {
+      setRefreshResult(result);
+      qc.invalidateQueries({ queryKey: ['tresorerie-devises'] });
+    },
+  });
+
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-      <div className="px-5 py-3.5 border-b border-gray-100 flex items-center justify-between">
-        <h2 className="font-semibold text-gray-800 text-sm">Taux de change (base XOF)</h2>
-        <span className="text-xs text-gray-400 bg-gray-100 rounded-full px-2 py-0.5">{devises.length}</span>
+      <div className="px-5 py-3.5 border-b border-gray-100 flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-3">
+          <h2 className="font-semibold text-gray-800 text-sm">Taux de change (base XOF)</h2>
+          <span className="text-xs text-gray-400 bg-gray-100 rounded-full px-2 py-0.5">{devises.length}</span>
+        </div>
+        <button
+          onClick={() => { setRefreshResult(null); refreshMutation.mutate(); }}
+          disabled={refreshMutation.isPending}
+          className="flex items-center gap-1.5 bg-[#1B3A6B] hover:bg-[#1B3A6B]/90 text-white text-xs font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${refreshMutation.isPending ? 'animate-spin' : ''}`} />
+          {refreshMutation.isPending ? 'Actualisation…' : 'Actualiser les taux'}
+        </button>
       </div>
+      {refreshMutation.isError && (
+        <div className="px-5 py-2 text-xs text-red-700 bg-red-50 border-b border-red-100">
+          {(refreshMutation.error as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Échec de l\'actualisation.'}
+        </div>
+      )}
+      {refreshResult && (
+        <div className="px-5 py-2 text-xs bg-green-50 border-b border-green-100 space-y-0.5">
+          <p className="text-green-700">✓ {refreshResult.updated.length} devise(s) mise(s) à jour : {refreshResult.updated.join(', ') || '—'}</p>
+          {refreshResult.notCovered.length > 0 && (
+            <p className="text-amber-700">⚠ Non couvertes par l'API (à corriger manuellement) : {refreshResult.notCovered.join(', ')}</p>
+          )}
+        </div>
+      )}
       <div className="overflow-x-auto">
         <table className="min-w-full text-xs">
           <thead>

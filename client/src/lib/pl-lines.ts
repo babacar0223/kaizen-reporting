@@ -1,6 +1,8 @@
 // Structure complète des lignes P&L — source unique pour tous les modules
 // Correspond exactement aux rubriques du template Excel
 
+import { formatEur } from './utils';
+
 export interface PlLineConfig {
   nom: string;
   computed?: boolean;  // ligne calculée (non saisie)
@@ -8,6 +10,7 @@ export interface PlLineConfig {
   total?: boolean;     // résultat final
   indent?: boolean;    // retrait visuel
   hint?: string;       // 'neg' = saisir en négatif
+  unit?: 'currency' | 'days';  // 'days' = nombre brut, pas de mise en forme monétaire (défaut 'currency')
 }
 
 // ── P&L principal (lignes 5-33 du template) ──────────────────────────────────
@@ -39,8 +42,21 @@ export const MAIN_PL_LINES: PlLineConfig[] = [
   { nom: 'Income Tax',                      hint: 'neg',  indent: true },
   { nom: 'Net Earnings',                    computed: true, total: true },
   { nom: 'Cash Flow',                       computed: true, total: true },
-  { nom: 'Working Days' },
+  { nom: 'Working Days', unit: 'days' },
 ];
+
+// Lookup rapide unit par nom de ligne (utilisé par les tableaux d'affichage)
+export const LINE_UNITS: Record<string, 'currency' | 'days'> = Object.fromEntries(
+  [...MAIN_PL_LINES].filter(l => l.unit).map(l => [l.nom, l.unit!])
+);
+
+// Formatage d'une valeur de ligne P&L selon son unité (jours = nombre brut, sinon devise)
+export function formatLineValue(nom: string, value: number, compact = true): string {
+  if (LINE_UNITS[nom] === 'days') {
+    return value ? String(Math.round(value)) : '—';
+  }
+  return value ? formatEur(value, compact) : '—';
+}
 
 // ── Détail frais généraux (lignes 48-70 du template) ─────────────────────────
 export const OVERHEAD_LINES: PlLineConfig[] = [

@@ -1,14 +1,18 @@
 import { useState } from 'react';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { TrendingUp, TrendingDown, Minus, AlertCircle, Target, BarChart3, Activity,
-         DollarSign, Layers, ChevronDown, ChevronUp } from 'lucide-react';
+         DollarSign, Layers } from 'lucide-react';
 import { useFiltersStore } from '../stores/filters.store';
 import { plService } from '../services/pl.service';
+import { referentielService } from '../services/referentiel.service';
 import { formatEur, formatPct } from '../lib/utils';
+import ScopeSelector, { type Scope } from '../components/layout/ScopeSelector';
+import MultiBuSynthesisTable from '../components/pl/MultiBuSynthesisTable';
 
 const MONTHS_EN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 const BU_THEME: Record<string, { label: string; grad: string; light: string; dot: string; ring: string }> = {
+  GROUP:              { label: 'Groupe',             grad: 'from-gray-900 to-gray-800',    light: 'bg-gray-50',    dot: '#111827', ring: 'ring-gray-200' },
   PROCUREMENT:        { label: 'Procurement',        grad: 'from-[#1B3A6B] to-[#1B5E8B]', light: 'bg-blue-50',    dot: '#1B5E8B', ring: 'ring-blue-200' },
   FREIGHT_FORWARDING: { label: 'Freight Forwarding', grad: 'from-[#3B1B8B] to-[#6B35B5]', light: 'bg-purple-50', dot: '#6B35B5', ring: 'ring-purple-200' },
   LOGISTICS:          { label: 'Logistics',           grad: 'from-[#0E6B5E] to-[#15857A]', light: 'bg-emerald-50',dot: '#15857A', ring: 'ring-emerald-200' },
@@ -43,7 +47,9 @@ function TrendPill({ pct }: { pct: number }) {
 
 // ── Executive View ────────────────────────────────────────────────────────────
 
-function BuExecCard({ bu, annee, mois, nMonths }: { bu: string; annee: number; mois: number; nMonths: number }) {
+// Budget YTD (typeValeur='TARGET') = déjà cumulé jusqu'au mois de référence de l'entité — utilisé
+// tel quel, jamais reproratisé par la plage de mois sélectionnée à l'écran (nMonths).
+function BuExecCard({ bu, annee, mois }: { bu: string; annee: number; mois: number }) {
   const theme = BU_THEME[bu];
   const { data, isLoading, error } = useQuery({
     queryKey: ['kpi', bu, annee, mois],
@@ -57,7 +63,7 @@ function BuExecCard({ bu, annee, mois, nMonths }: { bu: string; annee: number; m
   const net   = kpis['Net Earnings'];
 
   const revActuals = rev?.ACTUALS || 0;
-  const revTarget  = ((rev?.TARGET  || 0) / 12) * nMonths;
+  const revTarget  = rev?.TARGET || 0;
   const revN1      = rev?.YTD_N1  || 0;
   const revPct     = revTarget !== 0 ? revActuals / revTarget : 0;
   const revVsN1    = revN1 !== 0 ? (revActuals - revN1) / Math.abs(revN1) : 0;
@@ -66,7 +72,7 @@ function BuExecCard({ bu, annee, mois, nMonths }: { bu: string; annee: number; m
   const gmRate    = revActuals !== 0 ? gmActuals / revActuals : 0;
 
   const ebitActuals = ebit?.ACTUALS || 0;
-  const ebitTarget  = ((ebit?.TARGET  || 0) / 12) * nMonths;
+  const ebitTarget  = ebit?.TARGET || 0;
   const ebitPct     = revActuals !== 0 ? ebitActuals / revActuals : 0;
   const ebitBudPct  = ebitTarget !== 0 ? ebitActuals / ebitTarget : 0;
 
@@ -149,7 +155,7 @@ function BuExecCard({ bu, annee, mois, nMonths }: { bu: string; annee: number; m
   );
 }
 
-function ConsolidatedRow({ annee, mois, nMonths }: { annee: number; mois: number; nMonths: number }) {
+function ConsolidatedRow({ annee, mois }: { annee: number; mois: number }) {
   const results = useQueries({
     queries: BUS.map(bu => ({
       queryKey: ['kpi', bu, annee, mois],
@@ -165,11 +171,11 @@ function ConsolidatedRow({ annee, mois, nMonths }: { annee: number; mois: number
     results.reduce((acc, r) => acc + (r.data?.kpis?.[line]?.[type] || 0), 0);
 
   const totalRev    = sum('Revenue', 'ACTUALS');
-  const totalRevT   = (sum('Revenue', 'TARGET') / 12) * nMonths;
+  const totalRevT   = sum('Revenue', 'TARGET');
   const totalRevN1  = sum('Revenue', 'YTD_N1');
   const totalGM     = sum('Gross Margin', 'ACTUALS');
   const totalEbit   = sum('EBITDA', 'ACTUALS');
-  const totalEbitT  = (sum('EBITDA', 'TARGET') / 12) * nMonths;
+  const totalEbitT  = sum('EBITDA', 'TARGET');
   const totalNet    = sum('Net Earnings', 'ACTUALS');
 
   const revPct  = totalRevT  !== 0 ? totalRev  / totalRevT  : 0;
@@ -209,13 +215,13 @@ function ConsolidatedRow({ annee, mois, nMonths }: { annee: number; mois: number
   );
 }
 
-function ExecutiveView({ annee, mois, nMonths }: { annee: number; mois: number; nMonths: number }) {
+function ExecutiveView({ annee, mois }: { annee: number; mois: number }) {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {BUS.map(bu => <BuExecCard key={bu} bu={bu} annee={annee} mois={mois} nMonths={nMonths} />)}
+        {BUS.map(bu => <BuExecCard key={bu} bu={bu} annee={annee} mois={mois} />)}
       </div>
-      <ConsolidatedRow annee={annee} mois={mois} nMonths={nMonths} />
+      <ConsolidatedRow annee={annee} mois={mois} />
     </div>
   );
 }
@@ -223,23 +229,34 @@ function ExecutiveView({ annee, mois, nMonths }: { annee: number; mois: number; 
 // ── Standard Dashboard ────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
-  const { bu, annee, mois, moisMin } = useFiltersStore();
-  const nMonths = mois - moisMin + 1;
-  const theme = BU_THEME[bu] || BU_THEME.PROCUREMENT;
-  const [execMode, setExecMode] = useState(false);
+  const { annee, mois, moisMin } = useFiltersStore();
+  const [scope, setScope] = useState<Scope>('GROUP');
+  const [selectedEntiteId, setSelectedEntiteId] = useState<number | null>(null);
+  const theme = BU_THEME[scope];
+
+  const handleScopeChange = (s: Scope) => {
+    setScope(s);
+    setSelectedEntiteId(null);
+  };
+
+  const { data: entites = [] } = useQuery({
+    queryKey: ['entites', scope],
+    queryFn: () => referentielService.getEntites(scope),
+    enabled: scope !== 'GROUP',
+  });
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['kpi', bu, annee, mois],
-    queryFn: () => plService.getKpiBu(bu, annee, mois),
-    enabled: !execMode,
+    queryKey: ['kpi', scope, annee, mois, selectedEntiteId],
+    queryFn: () => plService.getKpiBu(scope, annee, mois, selectedEntiteId ?? undefined),
+    enabled: scope !== 'GROUP',
   });
 
   const kpis = data?.kpis || {};
   const hasData = Object.keys(kpis).length > 0;
   const rev = kpis['Revenue'];
-  const annualRevTarget = rev?.TARGET || 0;
-  const proratRevTarget = (annualRevTarget / 12) * nMonths;
-  const globalPct = proratRevTarget > 0 ? (rev?.ACTUALS || 0) / proratRevTarget : null;
+  // Budget YTD déjà cumulé jusqu'au mois de référence de l'entité — utilisé tel quel.
+  const revTargetYtd = rev?.TARGET || 0;
+  const globalPct = revTargetYtd > 0 ? (rev?.ACTUALS || 0) / revTargetYtd : null;
 
   return (
     <div className="space-y-6">
@@ -250,34 +267,42 @@ export default function DashboardPage() {
         <div className="absolute -bottom-6 -right-2 w-24 h-24 rounded-full bg-white/8" />
         <div className="absolute top-4 right-32 w-12 h-12 rounded-full bg-white/10" />
 
-        <div className="relative flex items-start justify-between">
+        <div className="relative flex items-start justify-between flex-wrap gap-4">
           <div>
             <p className="text-white/60 text-xs font-semibold uppercase tracking-widest mb-1">Financial Dashboard</p>
-            <h1 className="text-2xl font-bold">{execMode ? 'Vue Executive · 3 BU' : theme.label}</h1>
+            <h1 className="text-2xl font-bold">
+              {scope === 'GROUP' ? 'Vue Executive · Groupe' : theme.label}
+              {scope !== 'GROUP' && selectedEntiteId && (
+                <span className="text-white/70 font-medium"> · {entites.find(e => e.id === selectedEntiteId)?.nom}</span>
+              )}
+            </h1>
             <p className="text-white/70 text-sm mt-1">YTD {MONTHS_EN[mois - 1]} {annee}</p>
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Vue Executive toggle */}
-            <button
-              onClick={() => setExecMode(v => !v)}
-              className={`flex items-center gap-2 text-xs font-bold px-4 py-2 rounded-xl transition-all border ${
-                execMode
-                  ? 'bg-white text-gray-900 border-white shadow-lg'
-                  : 'bg-white/15 hover:bg-white/25 text-white border-white/30'
-              }`}
-            >
-              <Layers className="w-3.5 h-3.5" />
-              Vue executive
-              {execMode ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-            </button>
+            {scope !== 'GROUP' && entites.length > 0 && (
+              <select
+                value={selectedEntiteId ?? ''}
+                onChange={(e) => setSelectedEntiteId(e.target.value ? Number(e.target.value) : null)}
+                className="bg-white/10 text-white text-sm font-medium rounded-lg px-3 py-2 border border-white/20 focus:outline-none focus:ring-2 focus:ring-white/40"
+              >
+                <option value="" className="text-gray-900">All entities</option>
+                {entites.map(e => (
+                  <option key={e.id} value={e.id} className="text-gray-900">{e.nom}</option>
+                ))}
+              </select>
+            )}
 
-            {!execMode && globalPct !== null && (
+            <ScopeSelector value={scope} onChange={handleScopeChange} />
+
+            {scope !== 'GROUP' && (
               <div className="text-right">
                 <p className="text-white/60 text-xs font-medium uppercase tracking-wide mb-1">Budget Achievement</p>
-                <p className="text-4xl font-black">{Math.round(globalPct * 100)}<span className="text-2xl text-white/70">%</span></p>
+                <p className="text-4xl font-black">
+                  {globalPct !== null ? <>{Math.round(globalPct * 100)}<span className="text-2xl text-white/70">%</span></> : <span className="text-2xl text-white/60">N/A</span>}
+                </p>
                 <div className="mt-2 w-32 h-1.5 bg-white/20 rounded-full ml-auto">
-                  <div className="h-full bg-white rounded-full transition-all" style={{ width: `${Math.min(globalPct * 100, 100)}%` }} />
+                  <div className="h-full bg-white rounded-full transition-all" style={{ width: `${globalPct !== null ? Math.min(globalPct * 100, 100) : 0}%` }} />
                 </div>
               </div>
             )}
@@ -286,10 +311,10 @@ export default function DashboardPage() {
       </div>
 
       {/* ── Executive View ── */}
-      {execMode && <ExecutiveView annee={annee} mois={mois} nMonths={nMonths} />}
+      {scope === 'GROUP' && <ExecutiveView annee={annee} mois={mois} />}
 
       {/* ── Standard BU View ── */}
-      {!execMode && (
+      {scope !== 'GROUP' && (
         <>
           {isLoading && (
             <div className="flex items-center justify-center h-64">
@@ -316,7 +341,7 @@ export default function DashboardPage() {
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 {KPI_CONFIG.map(({ line, icon: Icon, iconBg, iconColor }) => {
                   const actuals  = kpis[line]?.ACTUALS || 0;
-                  const target   = ((kpis[line]?.TARGET || 0) / 12) * nMonths;
+                  const target   = kpis[line]?.TARGET || 0;
                   const ytdN1    = kpis[line]?.YTD_N1  || 0;
                   const vsTarget = target !== 0 ? (actuals - target) / Math.abs(target) : 0;
                   const vsN1     = ytdN1  !== 0 ? (actuals - ytdN1)  / Math.abs(ytdN1)  : 0;
@@ -360,9 +385,9 @@ export default function DashboardPage() {
               {hasData && (
                 <div className="grid grid-cols-3 gap-3">
                   {[
-                    { label: 'Revenue vs Budget',      val: kpis['Revenue']      ? (kpis['Revenue'].ACTUALS || 0)      - ((kpis['Revenue'].TARGET      || 0) / 12 * nMonths) : null },
-                    { label: 'EBITDA vs Budget',       val: kpis['EBITDA']       ? (kpis['EBITDA'].ACTUALS  || 0)      - ((kpis['EBITDA'].TARGET       || 0) / 12 * nMonths) : null },
-                    { label: 'Net Earnings vs Budget', val: kpis['Net Earnings'] ? (kpis['Net Earnings'].ACTUALS || 0) - ((kpis['Net Earnings'].TARGET  || 0) / 12 * nMonths) : null },
+                    { label: 'Revenue vs Budget',      val: kpis['Revenue']      ? (kpis['Revenue'].ACTUALS || 0)      - (kpis['Revenue'].TARGET      || 0) : null },
+                    { label: 'EBITDA vs Budget',       val: kpis['EBITDA']       ? (kpis['EBITDA'].ACTUALS  || 0)      - (kpis['EBITDA'].TARGET       || 0) : null },
+                    { label: 'Net Earnings vs Budget', val: kpis['Net Earnings'] ? (kpis['Net Earnings'].ACTUALS || 0) - (kpis['Net Earnings'].TARGET  || 0) : null },
                   ].map(({ label, val }) => {
                     if (val === null) return null;
                     const positive = val >= 0;
@@ -392,6 +417,15 @@ export default function DashboardPage() {
           )}
         </>
       )}
+
+      {/* ── Synthèse Multi-BU (toujours visible en bas) ── */}
+      <MultiBuSynthesisTable
+        annee={annee}
+        mois={mois}
+        moisMin={moisMin}
+        title="Synthèse Multi-BU"
+        subtitle={`YTD ${MONTHS_EN[mois - 1]} ${annee} — comparaison des 3 BU`}
+      />
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { Response } from 'express';
 import ExcelJS from 'exceljs';
 import prisma from '../lib/prisma';
 import { AuthRequest } from '../middleware/auth.middleware';
+import { resolveEntiteIds, isCompositeEntite, groupKeyOf } from '../lib/entiteGroups';
 
 function lastDayOfMonth(year: number, month: number): Date {
   return new Date(year, month, 0);
@@ -10,6 +11,14 @@ function lastDayOfMonth(year: number, month: number): Date {
 function isViewer(user: AuthRequest['user']): boolean {
   return user?.role === 'VIEWER';
 }
+
+// Lignes "stock" (photo à un instant donné, ex: effectif) : la valeur du mois le plus
+// récent doit être retenue, pas la somme des mois — contrairement aux lignes de flux (Revenue, etc.)
+const STOCK_LINES = new Set(['Staff Number']);
+
+// Lignes "taux / ratio par employé" : une moyenne a du sens, jamais une somme — voir le même
+// commentaire dans stats.controller.ts (getStats).
+const RATE_LINES = new Set(['Nominal Income Tax Rate (%)', 'Average VAT Rate (%)', 'Gross Margin per Staff', 'Operating Cost per Staff']);
 
 // GET /api/pl/:bu/:annee/:mois — P&L consolidé BU
 export async function getPlBu(req: AuthRequest, res: Response): Promise<void> {
@@ -30,33 +39,74 @@ export async function getPlBu(req: AuthRequest, res: Response): Promise<void> {
   });
 
   // YTD rows (budget targets, N-1 baselines): always fetch for the full year
-  // so that budget stored at a later reference month is always visible
+  // so that budget stored at a later reference month is always visible.
+  // typeValeur restreint à TARGET/YTD_N1 : l'ancien import BU dédié (Procurement/Freight Forwarding)
+  // écrit aussi des lignes typePeriode='YTD' avec typeValeur='ACTUALS' pour un usage différent —
+  // sans ce filtre elles se retrouveraient mélangées aux vraies valeurs mensuelles ACTUALS ci-dessous.
   const ytdRows = await prisma.faitPl.findMany({
-    where: { bu, annee: year, typePeriode: 'YTD', ...entityFilter },
+    where: { bu, annee: year, typePeriode: 'YTD', typeValeur: { in: ['TARGET', 'YTD_N1'] }, ...entityFilter },
     include: { entite: true, lignePl: true },
     orderBy: [{ lignePl: { ordreAffichage: 'asc' } }, { mois: 'desc' }],
   });
 
+  // Entités filles d'un groupe consolidé (ex. Local/International Procurement) : leurs montants
+  // doivent apparaître sous le nom de l'entité mère (Afrilog International), jamais séparément —
+  // même convention que getKpiBu/getStats (resolveEntiteIds/groupKeyOf).
+  const parentIdsNeeded = new Set<number>();
+  for (const row of [...mtdRows, ...ytdRows]) {
+    const g = groupKeyOf(row.entiteId);
+    if (g !== row.entiteId) parentIdsNeeded.add(g);
+  }
+  const parentEntites = parentIdsNeeded.size
+    ? await prisma.dimEntite.findMany({ where: { id: { in: [...parentIdsNeeded] } } })
+    : [];
+  const parentNameById = new Map(parentEntites.map(e => [e.id, e.nomCourt]));
+  function displayName(row: { entiteId: number; entite: { nomCourt: string } }): string {
+    const groupId = groupKeyOf(row.entiteId);
+    return groupId !== row.entiteId ? (parentNameById.get(groupId) ?? row.entite.nomCourt) : row.entite.nomCourt;
+  }
+
   const map = new Map<string, { entite: string; lignePl: string; typeValeur: string; montant: number }>();
   const ytdSeen = new Set<string>();
+  // YTD_N1 saisi à l'identique dans chaque entité fille : ne compter qu'une fois par groupe,
+  // contrairement à TARGET qui est propre à chaque entité et doit s'additionner normalement.
+  const n1Seen = new Set<string>();
 
   // YTD: most-recent month per (entiteId, ligne, typeValeur) wins
   for (const row of ytdRows) {
     const ytdKey = `${row.entiteId}|${row.lignePl.nom}|${row.typeValeur}`;
     if (ytdSeen.has(ytdKey)) continue;
     ytdSeen.add(ytdKey);
-    const key = `${row.entite.nomCourt}|${row.lignePl.nom}|${row.typeValeur}`;
-    map.set(key, { entite: row.entite.nomCourt, lignePl: row.lignePl.nom, typeValeur: row.typeValeur, montant: Number(row.montant) });
+    if (row.typeValeur === 'YTD_N1') {
+      const n1Key = `${row.lignePl.nom}|${groupKeyOf(row.entiteId)}`;
+      if (n1Seen.has(n1Key)) continue;
+      n1Seen.add(n1Key);
+    }
+    const name = displayName(row);
+    const key = `${name}|${row.lignePl.nom}|${row.typeValeur}`;
+    const existing = map.get(key);
+    if (existing) existing.montant += Number(row.montant);
+    else map.set(key, { entite: name, lignePl: row.lignePl.nom, typeValeur: row.typeValeur, montant: Number(row.montant) });
   }
 
-  // MTD: sum across months
+  // MTD: sum across months (except "stock" lines, where the latest month wins)
+  const latestMoisSeen = new Map<string, number>();
   for (const row of mtdRows) {
-    const key = `${row.entite.nomCourt}|${row.lignePl.nom}|${row.typeValeur}`;
+    const name = displayName(row);
+    const key = `${name}|${row.lignePl.nom}|${row.typeValeur}`;
     const existing = map.get(key);
-    if (existing) {
+    if (STOCK_LINES.has(row.lignePl.nom)) {
+      const seen = latestMoisSeen.get(key) ?? -1;
+      if (row.mois > seen) {
+        latestMoisSeen.set(key, row.mois);
+        map.set(key, { entite: name, lignePl: row.lignePl.nom, typeValeur: row.typeValeur, montant: Number(row.montant) });
+      } else if (row.mois === seen && map.has(key)) {
+        map.get(key)!.montant += Number(row.montant);
+      }
+    } else if (existing) {
       existing.montant += Number(row.montant);
     } else {
-      map.set(key, { entite: row.entite.nomCourt, lignePl: row.lignePl.nom, typeValeur: row.typeValeur, montant: Number(row.montant) });
+      map.set(key, { entite: name, lignePl: row.lignePl.nom, typeValeur: row.typeValeur, montant: Number(row.montant) });
     }
   }
 
@@ -76,20 +126,61 @@ export async function getPlEntite(req: AuthRequest, res: Response): Promise<void
     return;
   }
 
+  const scopeIds = resolveEntiteIds(eId);
   const data = await prisma.faitPl.findMany({
-    where: { bu, entiteId: eId, annee: year, mois: { lte: month } },
+    where: { bu, entiteId: { in: scopeIds }, annee: year, mois: { lte: month } },
     include: { lignePl: true },
     orderBy: [{ lignePl: { ordreAffichage: 'asc' } }, { mois: 'asc' }],
   });
 
   // Convertir Decimal Prisma en number (sinon JSON sérialise en string → bug de concaténation côté client)
-  const normalized = data.map(r => ({ ...r, montant: parseFloat(String(r.montant)) }));
+  let normalized = data.map(r => ({ ...r, montant: parseFloat(String(r.montant)) }));
+
+  // Entité consolidée (ex. Afrilog International = Local + International Procurement) : le
+  // frontend attend une seule ligne par (ligne P&L, mois, type de valeur, période), comme pour
+  // une entité normale.
+  // MTD = valeur mensuelle (flux) : on somme les mois identiques, chaque mois reste distinct.
+  // TARGET (budget) = propre à chaque fille : on somme toutes les filles et on garde le mois le
+  // plus récent, compatible avec la logique "most-recent-mois-wins" du reste de la plateforme.
+  // YTD_N1 (2025, colonne B) = valeur déjà consolidée saisie à l'identique dans chaque fille :
+  // on ne la compte qu'une fois, pas de cumul.
+  if (scopeIds.length > 1) {
+    const merged = new Map<string, typeof normalized[number]>();
+    for (const r of normalized) {
+      if (r.typePeriode === 'YTD' && r.typeValeur === 'YTD_N1') {
+        const key = `${r.lignePlId}|${r.typeValeur}|${r.typePeriode}`;
+        if (!merged.has(key)) merged.set(key, { ...r, entiteId: eId });
+        continue;
+      }
+      const key = r.typePeriode === 'YTD'
+        ? `${r.lignePlId}|${r.typeValeur}|${r.typePeriode}`
+        : `${r.lignePlId}|${r.mois}|${r.typeValeur}|${r.typePeriode}`;
+      const existing = merged.get(key);
+      if (existing) {
+        existing.montant += r.montant;
+        if (r.mois > existing.mois) existing.mois = r.mois;
+      } else {
+        merged.set(key, { ...r, entiteId: eId });
+      }
+    }
+    normalized = Array.from(merged.values());
+  }
+
   res.json({ bu, entiteId: eId, annee: year, mois: month, data: normalized });
 }
 
 // POST /api/admin/pl — Saisie ou upsert d'une ligne P&L
 export async function upsertPl(req: AuthRequest, res: Response): Promise<void> {
   const { entiteId, bu, lignePlId, annee, mois, typeValeur, typePeriode, montant, sourceOnglet } = req.body;
+  const user = req.user!;
+  if (isViewer(user) && user.entitesAccess.length > 0 && !user.entitesAccess.includes(entiteId)) {
+    res.status(403).json({ message: 'Accès à cette entité refusé' });
+    return;
+  }
+  if (isCompositeEntite(entiteId)) {
+    res.status(400).json({ message: 'Cette entité est consolidée : saisissez directement dans ses entités filles' });
+    return;
+  }
   const date = lastDayOfMonth(annee, mois);
 
   const result = await prisma.faitPl.upsert({
@@ -132,6 +223,20 @@ export async function batchUpsertPl(req: AuthRequest, res: Response): Promise<vo
     }>;
   };
 
+  const user = req.user!;
+  if (isViewer(user) && user.entitesAccess.length > 0) {
+    const unauthorized = rows.find(r => !user.entitesAccess.includes(r.entiteId));
+    if (unauthorized) {
+      res.status(403).json({ message: `Accès à l'entité ${unauthorized.entiteId} refusé` });
+      return;
+    }
+  }
+  const composite = rows.find(r => isCompositeEntite(r.entiteId));
+  if (composite) {
+    res.status(400).json({ message: `L'entité ${composite.entiteId} est consolidée : saisissez directement dans ses entités filles` });
+    return;
+  }
+
   const results = await Promise.all(
     rows.map(async (row) => {
       const date = lastDayOfMonth(row.annee, row.mois);
@@ -168,29 +273,37 @@ export async function exportEntityPl(req: AuthRequest, res: Response): Promise<v
   const bu  = req.params.bu as string;
   const eId = parseInt(req.params.entiteId as string);
   const yr  = parseInt(req.params.annee as string);
+  const user = req.user!;
+
+  if (isViewer(user) && user.entitesAccess.length > 0 && !user.entitesAccess.includes(eId)) {
+    res.status(403).json({ message: 'Access to this entity is not allowed' });
+    return;
+  }
 
   const entite = await prisma.dimEntite.findUnique({ where: { id: eId }, include: { bu: true } });
   if (!entite) { res.status(404).json({ message: 'Entité introuvable' }); return; }
 
+  // Entité consolidée (ex. Afrilog International) : on somme les lignes de ses entités filles.
   const rows = await prisma.faitPl.findMany({
-    where: { entiteId: eId, annee: yr },
+    where: { entiteId: { in: resolveEntiteIds(eId) }, annee: yr },
     include: { lignePl: true },
     orderBy: [{ lignePl: { ordreAffichage: 'asc' } }, { mois: 'asc' }],
   });
 
   type RK = string;
   const data = new Map<RK, number>();
-  const seenYtd = new Set<string>();
   for (const r of rows) {
     const nom = r.lignePl.nom;
     const tv  = r.typeValeur;
-    if (r.typePeriode === 'YTD') {
-      const ky = `${nom}|${tv}`;
-      if (seenYtd.has(ky)) continue;
-      seenYtd.add(ky);
-      data.set(`${nom}|ytd|${tv}`, Number(r.montant));
+    // YTD (budget, N-1) = valeur de référence annuelle : on somme toutes les entités concernées,
+    // quel que soit le mois où chacune l'a stockée — SAUF YTD_N1 (2025, colonne B), déjà
+    // consolidée et saisie à l'identique dans chaque fille : on ne la compte qu'une fois.
+    // MTD = valeur mensuelle : on somme les mois identiques.
+    const ky = r.typePeriode === 'YTD' ? `${nom}|ytd|${tv}` : `${nom}|${r.mois}|${tv}`;
+    if (tv === 'YTD_N1') {
+      if (!data.has(ky)) data.set(ky, Number(r.montant));
     } else {
-      data.set(`${nom}|${r.mois}|${tv}`, Number(r.montant));
+      data.set(ky, (data.get(ky) ?? 0) + Number(r.montant));
     }
   }
 
@@ -320,31 +433,51 @@ export async function exportEntityPl(req: AuthRequest, res: Response): Promise<v
   res.send(Buffer.from(buf as ArrayBuffer));
 }
 
-// GET /api/kpi/bu/:bu/:annee/:mois — KPIs synthétiques
+// GET /api/kpi/bu/:bu/:annee/:mois?entiteId=&moisMin= — KPIs synthétiques
 export async function getKpiBu(req: AuthRequest, res: Response): Promise<void> {
   const bu = req.params.bu as string;
   const year = parseInt(req.params.annee as string);
   const month = parseInt(req.params.mois as string);
+  const entiteId = req.query.entiteId ? parseInt(req.query.entiteId as string) : undefined;
+  // Fenêtre de sommation des Actuals (mois en cours) — par défaut 1 = depuis janvier, comportement
+  // historique inchangé pour tous les appelants existants. Budget/YTD N-1 restent toujours "tel
+  // qu'importé jusqu'au mois de référence", indépendamment de moisMin — même convention que partout
+  // ailleurs dans la plateforme (EntityMonthlyTable, PlBuPage…).
+  const moisMinRaw = req.query.moisMin ? parseInt(req.query.moisMin as string) : 1;
+  const moisMin = isFinite(moisMinRaw) && moisMinRaw >= 1 && moisMinRaw <= month ? moisMinRaw : 1;
   const user = req.user!;
 
-  const entityFilter = isViewer(user) && user.entitesAccess.length > 0
-    ? { entiteId: { in: user.entitesAccess } }
-    : {};
+  const restricted = isViewer(user) && user.entitesAccess.length > 0;
+  if (restricted && entiteId && !user.entitesAccess.includes(entiteId)) {
+    res.status(403).json({ message: 'Access to this entity is not allowed' });
+    return;
+  }
+  const entityFilter = restricted ? { entiteId: { in: user.entitesAccess } } : {};
+  const entiteFilter = entiteId ? { entiteId: { in: resolveEntiteIds(entiteId) } } : {};
 
   const mtdRows = await prisma.faitPl.findMany({
-    where: { bu, annee: year, typePeriode: 'MTD', mois: { lte: month }, ...entityFilter },
+    where: { bu, annee: year, typePeriode: 'MTD', mois: { gte: moisMin, lte: month }, ...entityFilter, ...entiteFilter },
     include: { lignePl: true },
     orderBy: { mois: 'desc' },
   });
 
+  // typeValeur restreint à TARGET/YTD_N1 — voir le même commentaire dans getPlBu : l'ancien import
+  // BU Procurement/Freight Forwarding écrit aussi typePeriode='YTD' avec typeValeur='ACTUALS'.
   const ytdRows = await prisma.faitPl.findMany({
-    where: { bu, annee: year, typePeriode: 'YTD', ...entityFilter },
+    where: { bu, annee: year, typePeriode: 'YTD', typeValeur: { in: ['TARGET', 'YTD_N1'] }, ...entityFilter, ...entiteFilter },
     include: { lignePl: true },
     orderBy: { mois: 'desc' },
   });
 
   const kpis: Record<string, Record<string, number>> = {};
   const ytdSeen = new Set<string>();
+  // YTD_N1 (2025, colonne B) est une valeur déjà consolidée saisie à l'identique dans chaque
+  // entité fille (Local + International Procurement) : on ne l'additionne qu'une fois par
+  // groupe (l'entité elle-même si elle n'a pas de parent), contrairement à TARGET qui est
+  // propre à chaque entité et doit s'additionner normalement.
+  const n1Seen = new Set<string>();
+  // RATE_LINES : moyenne, pas somme — voir le commentaire sur RATE_LINES plus haut.
+  const rateCountYtd = new Map<string, number>(); // clé: ligne|type
 
   for (const row of ytdRows) {
     const ytdKey = `${row.entiteId}|${row.lignePl.nom}|${row.typeValeur}`;
@@ -352,13 +485,50 @@ export async function getKpiBu(req: AuthRequest, res: Response): Promise<void> {
     ytdSeen.add(ytdKey);
     const nom = row.lignePl.nom;
     if (!kpis[nom]) kpis[nom] = {};
+    if (row.typeValeur === 'YTD_N1') {
+      const groupKey = `${nom}|${groupKeyOf(row.entiteId)}`;
+      if (n1Seen.has(groupKey)) continue;
+      n1Seen.add(groupKey);
+    }
     kpis[nom][row.typeValeur] = (kpis[nom][row.typeValeur] || 0) + Number(row.montant);
+    if (RATE_LINES.has(nom)) {
+      const key = `${nom}|${row.typeValeur}`;
+      rateCountYtd.set(key, (rateCountYtd.get(key) || 0) + 1);
+    }
   }
 
+  // mtdRows is ordered by mois desc, so for "stock" lines we track each entity's own latest
+  // month separately (stockPerEntity) and only sum across entities at the end — otherwise an
+  // entity that hasn't reported the globally-latest month of the whole scope would be dropped
+  // entirely instead of contributing its own latest value.
+  const stockPerEntity = new Map<string, number>(); // clé: entiteId|ligne|type
+  const stockSeenEntity = new Set<string>();
   for (const row of mtdRows) {
     const nom = row.lignePl.nom;
     if (!kpis[nom]) kpis[nom] = {};
-    kpis[nom][row.typeValeur] = (kpis[nom][row.typeValeur] || 0) + Number(row.montant);
+    if (STOCK_LINES.has(nom)) {
+      const entKey = `${row.entiteId}|${nom}|${row.typeValeur}`;
+      if (!stockSeenEntity.has(entKey)) {
+        stockSeenEntity.add(entKey);
+        stockPerEntity.set(entKey, Number(row.montant));
+      }
+      // older month for this entity — ignored on purpose (stock semantics)
+    } else if (RATE_LINES.has(nom)) {
+      kpis[nom][row.typeValeur] = (kpis[nom][row.typeValeur] || 0) + Number(row.montant);
+      const key = `${nom}|${row.typeValeur}`;
+      rateCountYtd.set(key, (rateCountYtd.get(key) || 0) + 1);
+    } else {
+      kpis[nom][row.typeValeur] = (kpis[nom][row.typeValeur] || 0) + Number(row.montant);
+    }
+  }
+  for (const [key, val] of stockPerEntity) {
+    const [, nom, tv] = key.split('|');
+    if (!kpis[nom]) kpis[nom] = {};
+    kpis[nom][tv] = (kpis[nom][tv] || 0) + val;
+  }
+  for (const [key, count] of rateCountYtd) {
+    const [nom, tv] = key.split('|');
+    if (kpis[nom]?.[tv] !== undefined && count > 0) kpis[nom][tv] = kpis[nom][tv] / count;
   }
 
   res.json({ bu, annee: year, mois: month, kpis });

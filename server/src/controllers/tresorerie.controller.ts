@@ -92,6 +92,47 @@ export async function upsertDevise(req: AuthRequest, res: Response): Promise<voi
   res.json(devise);
 }
 
+// POST /referentiels/tresorerie/devises/refresh — actualise les taux depuis exchangerate-api.com (manuel, admin)
+export async function refreshDevises(req: AuthRequest, res: Response): Promise<void> {
+  const apiKey = process.env.EXCHANGERATE_API_KEY;
+  if (!apiKey) {
+    res.status(400).json({ message: "EXCHANGERATE_API_KEY n'est pas configurée côté serveur." });
+    return;
+  }
+
+  const devises = await prisma.tresorerieDevise.findMany();
+
+  let json: Record<string, unknown>;
+  try {
+    const response = await fetch(`https://v6.exchangerate-api.com/v6/${apiKey}/latest/XOF`);
+    json = await response.json();
+  } catch {
+    res.status(502).json({ message: 'Impossible de contacter le service de taux de change.' });
+    return;
+  }
+  if (json['result'] !== 'success' || !json['conversion_rates']) {
+    res.status(502).json({ message: `Échec de l'appel exchangerate-api.com : ${json['error-type'] ?? 'réponse invalide'}` });
+    return;
+  }
+  const rates = json['conversion_rates'] as Record<string, number>;
+
+  const updated: string[] = [];
+  const notCovered: string[] = [];
+  for (const d of devises) {
+    if (d.code === 'XOF') continue;
+    const rateXofToForeign = rates[d.code];
+    if (!rateXofToForeign) {
+      notCovered.push(d.code);
+      continue;
+    }
+    const tauxXof = 1 / rateXofToForeign;
+    await prisma.tresorerieDevise.update({ where: { code: d.code }, data: { tauxXof } });
+    updated.push(d.code);
+  }
+
+  res.json({ updated, notCovered });
+}
+
 // ── Saisie journalière ───────────────────────────────────────────────────────
 
 // GET /tresorerie/saisie/:date?entiteId= — état du jour, avec brouillon pré-rempli pour les banques sans saisie
@@ -110,6 +151,7 @@ export async function getSaisieJour(req: AuthRequest, res: Response): Promise<vo
     banques.map(async (banque) => {
       const existing = await prisma.tresorerieSaisie.findUnique({
         where: { date_banqueId: { date, banqueId: banque.id } },
+        include: { mouvements: { orderBy: { id: 'asc' } } },
       });
       if (existing) {
         return {
@@ -127,6 +169,7 @@ export async function getSaisieJour(req: AuthRequest, res: Response): Promise<vo
           commentaire: existing.commentaire ?? '',
           tauxXofUtilise: toNum(existing.tauxXofUtilise),
           saisi: true,
+          mouvements: existing.mouvements.map(m => ({ id: m.id, type: m.type, montant: toNum(m.montant), libelle: m.libelle ?? '' })),
         };
       }
       const prior = await prisma.tresorerieSaisie.findFirst({
@@ -149,6 +192,7 @@ export async function getSaisieJour(req: AuthRequest, res: Response): Promise<vo
         commentaire: '',
         tauxXofUtilise: devise ? toNum(devise.tauxXof) : 1,
         saisi: false,
+        mouvements: [],
       };
     })
   );
@@ -170,6 +214,7 @@ export async function batchUpsertSaisie(req: AuthRequest, res: Response): Promis
       caisseJMoins1: number;
       caisseJ: number;
       commentaire?: string;
+      mouvements?: Array<{ type: 'ENTREE' | 'SORTIE'; montant: number; libelle?: string }>;
     }>;
   };
   const date = parseDate(dateStr);
@@ -188,15 +233,23 @@ export async function batchUpsertSaisie(req: AuthRequest, res: Response): Promis
       .map(async (row) => {
         const banque = banqueMap.get(row.banqueId)!;
         const tauxXofUtilise = deviseMap.get(banque.devise) ?? 1;
-        const positionJ = row.positionJMoins1 + row.entrees - row.sorties;
-        return prisma.tresorerieSaisie.upsert({
+        const mouvements = row.mouvements ?? [];
+        const entrees = mouvements.length > 0
+          ? mouvements.filter(m => m.type === 'ENTREE').reduce((s, m) => s + m.montant, 0)
+          : row.entrees;
+        const sorties = mouvements.length > 0
+          ? mouvements.filter(m => m.type === 'SORTIE').reduce((s, m) => s + m.montant, 0)
+          : row.sorties;
+        const positionJ = row.positionJMoins1 + entrees - sorties;
+
+        const saisie = await prisma.tresorerieSaisie.upsert({
           where: { date_banqueId: { date, banqueId: row.banqueId } },
           update: {
             devise: banque.devise,
             tauxXofUtilise,
             positionJMoins1: row.positionJMoins1,
-            entrees: row.entrees,
-            sorties: row.sorties,
+            entrees,
+            sorties,
             positionJ,
             positionBanque: row.positionBanque,
             caisseJMoins1: row.caisseJMoins1 ?? 0,
@@ -209,8 +262,8 @@ export async function batchUpsertSaisie(req: AuthRequest, res: Response): Promis
             devise: banque.devise,
             tauxXofUtilise,
             positionJMoins1: row.positionJMoins1,
-            entrees: row.entrees,
-            sorties: row.sorties,
+            entrees,
+            sorties,
             positionJ,
             positionBanque: row.positionBanque,
             caisseJMoins1: row.caisseJMoins1 ?? 0,
@@ -219,6 +272,16 @@ export async function batchUpsertSaisie(req: AuthRequest, res: Response): Promis
             createdById: userId,
           },
         });
+
+        // Remplacement complet des lignes de détail (source de vérité = payload envoyé)
+        await prisma.tresorerieMouvement.deleteMany({ where: { saisieId: saisie.id } });
+        if (mouvements.length > 0) {
+          await prisma.tresorerieMouvement.createMany({
+            data: mouvements.map(m => ({ saisieId: saisie.id, type: m.type, montant: m.montant, libelle: m.libelle })),
+          });
+        }
+
+        return saisie;
       })
   );
 

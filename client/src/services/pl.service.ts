@@ -8,8 +8,8 @@ export const plService = {
   getPlEntite: (bu: string, entiteId: number, annee: number, mois: number) =>
     api.get(`/pl/${bu}/${entiteId}/${annee}/${mois}`).then(r => r.data),
 
-  getKpiBu: (bu: string, annee: number, mois: number) =>
-    api.get<KpiBuResponse>(`/kpi/bu/${bu}/${annee}/${mois}`).then(r => r.data),
+  getKpiBu: (bu: string, annee: number, mois: number, entiteId?: number, moisMin?: number) =>
+    api.get<KpiBuResponse>(`/kpi/bu/${bu}/${annee}/${mois}`, { params: { ...(entiteId ? { entiteId } : {}), ...(moisMin && moisMin > 1 ? { moisMin } : {}) } }).then(r => r.data),
 
   upsertPl: (data: object) => api.post('/admin/pl', data).then(r => r.data),
   batchUpsertPl: (rows: object[]) => api.post('/admin/pl/batch', { rows }).then(r => r.data),

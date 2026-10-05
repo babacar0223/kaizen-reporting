@@ -1,27 +1,26 @@
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { cn } from '../../lib/utils';
 import { useAuthStore } from '../../stores/auth.store';
 import PageFilters from '../../components/layout/PageFilters';
 
 const ALL_TABS = [
   { to: '/figures',              label: 'P&L Consolidated', end: true,  viewerOk: true  },
-  { to: '/figures/sales',        label: 'Sales & Margin',   end: false, viewerOk: true  },
-  { to: '/figures/monthly',      label: 'Monthly View',     end: false, viewerOk: true  },
   { to: '/figures/consolidated', label: 'Multi-BU',         end: false, viewerOk: false },
 ];
 
 export default function FiguresPage() {
   const { user } = useAuthStore();
+  const { pathname } = useLocation();
   const isViewer = user?.role === 'VIEWER';
   const tabs = isViewer ? ALL_TABS.filter(t => t.viewerOk) : ALL_TABS;
+  // P&L Consolidated a son propre sélecteur de périmètre ; Multi-BU est déjà consolidé sur les 3 BU.
+  // Dans les deux cas les boutons BU / Entité de la barre globale n'ont aucun effet → on les masque.
+  const hideBuEntity = pathname === '/figures' || pathname === '/figures/consolidated';
 
   return (
     <div>
-      {/* Header: title + filters */}
-      <div className="flex items-center justify-between mb-0">
-        <h1 className="text-xl font-bold text-gray-900">Financial Figures</h1>
-      </div>
-      <PageFilters showEntity />
+      <h1 className="text-xl font-bold text-gray-900">Financial Figures</h1>
+      <PageFilters showEntity={!hideBuEntity} showBu={!hideBuEntity} />
 
       {/* Tab nav — sits right below the filter bar (filter bar already has border-b) */}
       <div className="border-b border-gray-200 -mt-[1px] mb-5">

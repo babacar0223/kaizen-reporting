@@ -26,7 +26,7 @@ export default function SaisiePlPage() {
   const { bu, annee, mois } = useFiltersStore();
   const qc = useQueryClient();
   const [selectedBu, setSelectedBu]     = useState(bu);
-  const [year]                           = useState(annee);
+  const [year, setYear]                  = useState(annee);
   const [typeValeur, setTypeValeur]      = useState('ACTUALS');
   const [entiteId, setEntiteId]          = useState<number | null>(null);
   const [selectedMonths, setSelectedMonths] = useState<number[]>([mois]);
@@ -227,7 +227,8 @@ export default function SaisiePlPage() {
           </div>
           <div>
             <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Year</label>
-            <div className="mt-1 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-700 font-mono bg-gray-50">{year}</div>
+            <input type="number" value={year} onChange={e => setYear(parseInt(e.target.value) || annee)} min={2020} max={2035}
+              className="w-full mt-1 border border-gray-200 rounded-lg px-2 py-1.5 text-sm font-mono focus:ring-2 focus:ring-[#00A3B4] focus:outline-none" />
           </div>
         </div>
 

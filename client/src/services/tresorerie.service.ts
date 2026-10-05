@@ -27,6 +27,8 @@ export const tresorerieService = {
     api.get<TresorerieDevise[]>('/referentiels/tresorerie/devises').then(r => r.data),
   upsertDevise: (data: object) =>
     api.post<TresorerieDevise>('/referentiels/tresorerie/devises', data).then(r => r.data),
+  refreshDevises: () =>
+    api.post<{ updated: string[]; notCovered: string[] }>('/referentiels/tresorerie/devises/refresh').then(r => r.data),
 
   getSaisieJour: (date: string, entiteId: number) =>
     api.get<TresorerieSaisieJourResponse>(`/tresorerie/saisie/${date}`, { params: { entiteId } }).then(r => r.data),

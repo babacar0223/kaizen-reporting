@@ -1,19 +1,23 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { cn } from '../../lib/utils';
+import { useAuthStore } from '../../stores/auth.store';
 
 const TABS = [
   { to: '/admin', label: 'Excel Import', end: true },
   { to: '/admin/entry-pl', label: 'Direct P&L Entry' },
   { to: '/admin/entry-sales', label: 'Sales Entry' },
+  { to: '/admin/groupes-clients', label: 'Client Groups', adminOnly: true },
 ];
 
 export default function AdminPage() {
+  const role = useAuthStore(s => s.user?.role);
+  const tabs = TABS.filter(t => !t.adminOnly || role === 'SUPER_ADMIN' || role === 'ADMIN');
   return (
     <div className="space-y-4">
       <h1 className="text-xl font-bold text-gray-900">Import & Data Entry</h1>
       <div className="border-b border-gray-200">
         <nav className="flex gap-1">
-          {TABS.map(({ to, label, end }) => (
+          {tabs.map(({ to, label, end }) => (
             <NavLink
               key={to}
               to={to}

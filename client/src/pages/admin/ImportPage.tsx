@@ -8,17 +8,19 @@ import api from '../../lib/api';
 import { plService } from '../../services/pl.service';
 import { referentielService } from '../../services/referentiel.service';
 import { useFiltersStore } from '../../stores/filters.store';
+import { useAuthStore } from '../../stores/auth.store';
 import { useQuery } from '@tanstack/react-query';
 import type { ImportResult, PreviewResult, ClientPreviewRow } from '../../types';
 
 const MONTHS_EN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const MONTHS_FR = ['janv','févr','mars','avr','mai','juin','juil','août','sept','oct','nov','déc'];
 
+// Procurement / Freight Forwarding / Logistics par BU (anciens formats dédiés) retirés de la
+// sélection : plus utilisés, tout import se fait désormais entité par entité via Template Auto
+// (fichier récupéré depuis Browse) — les garder visibles prêtait à confusion pour les chargés
+// d'importation des entités.
 const BU_OPTIONS = [
-  { value: 'TEMPLATE',          label: 'Template Auto',      color: 'from-[#B45309] to-[#D97706]', isTemplate: true  },
-  { value: 'PROCUREMENT',       label: 'Procurement',        color: 'from-[#1B3A6B] to-[#1B5E8B]', isTemplate: false },
-  { value: 'FREIGHT_FORWARDING',label: 'Freight Forwarding', color: 'from-[#3B1B8B] to-[#6B35B5]', isTemplate: false },
-  { value: 'LOGISTICS',         label: 'Logistics',          color: 'from-[#0E6B5E] to-[#15857A]', isTemplate: false },
+  { value: 'TEMPLATE', label: 'Template Auto', color: 'from-[#B45309] to-[#D97706]', isTemplate: true },
 ];
 
 const BU_LABELS: Record<string, string> = {
@@ -27,6 +29,20 @@ const BU_LABELS: Record<string, string> = {
 
 const SUBTOTALS = new Set(['Gross Margin','Other Operating Charges','Other Current Revenues','EBITDA','Operating Income','Net Cost of Debt','Other Financial Gain & Loss','Profit Before Tax']);
 const TOTALS = new Set(['Net Earnings','Cash Flow']);
+
+// Formate le suffixe "(÷taux)" affiché près de la devise. Affiche les 3 taux séparément dès que
+// Budget et/ou YTD N-1 diffèrent du taux Actuals (colonnes de la feuille "PL" — voir readCustomRates
+// côté serveur), pour ne jamais laisser croire qu'un seul taux uniforme a été appliqué.
+function fmtRate(n: number): string {
+  return n.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
+}
+function rateSuffix(devise?: string, taux?: number, tauxBudget?: number, tauxN1?: number): string {
+  if (!devise || devise === 'EUR' || !taux || taux === 1) return '';
+  const parts = [`Actuals ÷${fmtRate(taux)}`];
+  if (tauxBudget !== undefined) parts.push(`Budget ÷${fmtRate(tauxBudget)}`);
+  if (tauxN1 !== undefined) parts.push(`N-1 ÷${fmtRate(tauxN1)}`);
+  return parts.length > 1 ? ` (${parts.join(', ')})` : ` (÷${fmtRate(taux)})`;
+}
 
 function fmtK(v: number) {
   const k = Math.round(v / 1000);
@@ -53,6 +69,8 @@ function fmtStatVal(v: number, nom: string): string {
 
 export default function ImportPage() {
   const { annee, mois } = useFiltersStore();
+  const { user } = useAuthStore();
+  const isViewer = user?.role === 'VIEWER';
   const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -86,6 +104,12 @@ export default function ImportPage() {
     queryKey: ['entites', resetBu],
     queryFn: () => referentielService.getEntites(resetBu),
     enabled: showReset,
+  });
+
+  const { data: myEntites = [] } = useQuery({
+    queryKey: ['entites-mine'],
+    queryFn: () => referentielService.getEntites(),
+    enabled: isViewer && bu === 'LOGISTICS',
   });
 
   const handleDownloadTemplate = async () => {
@@ -133,7 +157,11 @@ export default function ImportPage() {
       const res = await api.post<ImportResult>(`/admin/import/${bu}`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
       setResult(res.data);
       setPreview(null);
-      if (!res.data.errors || res.data.errors.length === 0) {
+      // Rafraîchir le cache dès qu'une ligne a réellement été écrite — une erreur sur UNE ligne/mois
+      // (ex. un caractère non numérique isolé) ne doit pas empêcher l'affichage des centaines d'autres
+      // lignes correctement importées dans le même fichier (sinon la plateforme montre encore les
+      // anciennes valeurs malgré un import réussi pour la quasi-totalité des données).
+      if ((res.data.created ?? 0) > 0 || (res.data.updated ?? 0) > 0) {
         qc.invalidateQueries({ queryKey: ['pl-bu'] });
         qc.invalidateQueries({ queryKey: ['kpi'] });
         qc.invalidateQueries({ queryKey: ['pl-saisie'] });
@@ -184,18 +212,7 @@ export default function ImportPage() {
   const isSuccess = result && !hasErrors;
   const showPreviewPanel = isTemplate && (previewLoading || !!preview);
 
-  // Build client table: pair REVENUE + MARGIN rows by client name
-  const clientPairs: Array<{ nom: string; rev?: ClientPreviewRow; mrg?: ClientPreviewRow }> = [];
-  if (preview?.clientLines) {
-    const map = new Map<string, { rev?: ClientPreviewRow; mrg?: ClientPreviewRow }>();
-    for (const cl of preview.clientLines) {
-      if (!map.has(cl.clientNom)) map.set(cl.clientNom, {});
-      const entry = map.get(cl.clientNom)!;
-      if (cl.type === 'REVENUE') entry.rev = cl;
-      else entry.mrg = cl;
-    }
-    for (const [nom, entry] of map.entries()) clientPairs.push({ nom, ...entry });
-  }
+  const clientLines: ClientPreviewRow[] = preview?.clientLines ?? [];
 
   return (
     <div className={`flex gap-6 items-start ${showPreviewPanel ? 'w-full' : 'max-w-2xl'}`}>
@@ -222,29 +239,13 @@ export default function ImportPage() {
                     </div>
                     <p className={`mt-0.5 text-sm font-bold ${active ? 'text-white' : 'text-amber-800'}`}>{t.label}</p>
                     <p className={`text-xs ${active ? 'text-white/70' : 'text-amber-600'}`}>
-                      Feuilles «&nbsp;PL&nbsp;» + «&nbsp;PL clients&nbsp;» — BU, entité &amp; mois auto-détectés
+                      «&nbsp;PL&nbsp;» + «&nbsp;PL clients&nbsp;» sheets — BU, entity &amp; month auto-detected
                     </p>
                   </div>
                 </div>
               </button>
             );
           })()}
-          <div className="grid grid-cols-3 gap-3">
-            {BU_OPTIONS.slice(1).map(b => {
-              const active = bu === b.value;
-              return (
-                <button key={b.value} onClick={() => setBu(b.value)}
-                  className={`relative overflow-hidden rounded-xl border-2 p-4 text-left transition-all ${
-                    active ? 'border-transparent shadow-md' : 'border-gray-200 bg-white hover:border-gray-300'
-                  }`}>
-                  {active && <div className={`absolute inset-0 bg-gradient-to-br ${b.color}`} />}
-                  <div className="relative">
-                    <p className={`text-sm font-semibold ${active ? 'text-white' : 'text-gray-700'}`}>{b.label}</p>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
         </div>
 
         {/* Main import card */}
@@ -255,9 +256,9 @@ export default function ImportPage() {
                 {isTemplate ? <Zap className="w-5 h-5 text-white" /> : <FileSpreadsheet className="w-5 h-5 text-white" />}
               </div>
               <div>
-                <p className="text-white font-bold">{isTemplate ? 'Import Template Auto' : `Import ${BU_LABELS[bu] ?? bu}`}</p>
+                <p className="text-white font-bold">{isTemplate ? 'Auto Template Import' : `Import ${BU_LABELS[bu] ?? bu}`}</p>
                 <p className="text-white/60 text-xs">
-                  {isTemplate ? 'BU, entité & mois auto-détectés depuis le fichier' : 'Import manuel par BU'}
+                  {isTemplate ? 'BU, entity & month auto-detected from the file' : 'Manual import by BU'}
                 </p>
               </div>
             </div>
@@ -272,12 +273,12 @@ export default function ImportPage() {
             {!isTemplate && (
               <div className={`grid gap-4 ${bu === 'LOGISTICS' ? 'grid-cols-3' : 'grid-cols-2'}`}>
                 <div>
-                  <label className="block text-xs font-bold text-gray-600 mb-1.5 uppercase tracking-wide">Année</label>
+                  <label className="block text-xs font-bold text-gray-600 mb-1.5 uppercase tracking-wide">Year</label>
                   <input type="number" value={year} onChange={e => setYear(parseInt(e.target.value))} min={2024} max={2030}
                     className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-[#00A3B4] focus:outline-none" />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-gray-600 mb-1.5 uppercase tracking-wide">Mois</label>
+                  <label className="block text-xs font-bold text-gray-600 mb-1.5 uppercase tracking-wide">Month</label>
                   <select value={month} onChange={e => setMonth(parseInt(e.target.value))}
                     className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-[#00A3B4] focus:outline-none">
                     {MONTHS_EN.map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
@@ -285,10 +286,18 @@ export default function ImportPage() {
                 </div>
                 {bu === 'LOGISTICS' && (
                   <div>
-                    <label className="block text-xs font-bold text-gray-600 mb-1.5 uppercase tracking-wide">Code entité</label>
-                    <input type="text" value={nomCourt} onChange={e => setNomCourt(e.target.value)}
-                      placeholder="ex: CSTT, AM…"
-                      className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-[#00A3B4] focus:outline-none" />
+                    <label className="block text-xs font-bold text-gray-600 mb-1.5 uppercase tracking-wide">Entity code</label>
+                    {isViewer ? (
+                      <select value={nomCourt} onChange={e => setNomCourt(e.target.value)}
+                        className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-[#00A3B4] focus:outline-none">
+                        <option value="">Select…</option>
+                        {myEntites.map(e => <option key={e.id} value={e.nomCourt}>{e.nomCourt}</option>)}
+                      </select>
+                    ) : (
+                      <input type="text" value={nomCourt} onChange={e => setNomCourt(e.target.value)}
+                        placeholder="e.g. CSTT, AM…"
+                        className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-[#00A3B4] focus:outline-none" />
+                    )}
                   </div>
                 )}
               </div>
@@ -296,13 +305,13 @@ export default function ImportPage() {
 
             {isTemplate && (
               <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                <strong>Sélectionnez BU en A1 et entité en A2</strong> dans «&nbsp;PL clients&nbsp;».
-                L'année, les mois et l'entité sont <strong>lus automatiquement</strong>.
+                <strong>Select BU in A1 and entity in A2</strong> in the «&nbsp;PL clients&nbsp;» sheet.
+                Year, months and entity are <strong>read automatically</strong>.
               </p>
             )}
 
             <div>
-              <label className="block text-xs font-bold text-gray-600 mb-1.5 uppercase tracking-wide">Fichier Excel (.xlsx)</label>
+              <label className="block text-xs font-bold text-gray-600 mb-1.5 uppercase tracking-wide">Excel file (.xlsx)</label>
               <div
                 className={`relative border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${
                   fileName ? 'border-[#00A3B4] bg-teal-50' : 'border-gray-200 hover:border-[#00A3B4] hover:bg-gray-50'
@@ -314,7 +323,7 @@ export default function ImportPage() {
                     <FileSpreadsheet className="w-8 h-8 text-[#00A3B4] flex-shrink-0" />
                     <div className="text-left">
                       <p className="text-sm font-semibold text-[#00A3B4]">{fileName}</p>
-                      <p className="text-xs text-gray-400">{previewLoading ? 'Analyse en cours…' : 'Prêt à importer'}</p>
+                      <p className="text-xs text-gray-400">{previewLoading ? 'Analyzing…' : 'Ready to import'}</p>
                     </div>
                     <button onClick={e => { e.stopPropagation(); clearFile(); }}
                       className="ml-2 p-1 rounded-full hover:bg-teal-100 text-gray-400 hover:text-red-500 transition-colors">
@@ -324,7 +333,7 @@ export default function ImportPage() {
                 ) : (
                   <>
                     <Upload className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-                    <p className="text-sm font-medium text-gray-500">Déposez votre fichier ou <span className="text-[#00A3B4] font-semibold">parcourir</span></p>
+                    <p className="text-sm font-medium text-gray-500">Drop your file or <span className="text-[#00A3B4] font-semibold">browse</span></p>
                     <p className="text-xs text-gray-300 mt-1">.xlsx — max 20 Mo</p>
                   </>
                 )}
@@ -332,12 +341,30 @@ export default function ImportPage() {
               </div>
             </div>
 
+            {isTemplate && (preview?.mandatoryWarnings?.length ?? 0) > 0 && (
+              <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                <strong>Import blocked:</strong> fill in these mandatory lines in the «&nbsp;PL&nbsp;» sheet for
+                the reference month, then re-upload the file —
+                <span className="font-semibold"> {preview!.mandatoryWarnings!.join(', ')}</span>.
+              </div>
+            )}
+
+            {isTemplate && (preview?.parseWarnings?.length ?? 0) > 0 && (
+              <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                <strong>{preview!.parseWarnings!.length} non-numeric cell(s)</strong> (text) will be imported as 0.
+                Fix them to avoid skewing the totals:
+                <ul className="mt-1 space-y-0.5 max-h-28 overflow-y-auto">
+                  {preview!.parseWarnings!.map((w, i) => <li key={i}>• {w}</li>)}
+                </ul>
+              </div>
+            )}
+
             <button
               onClick={handleImport}
-              disabled={loading || !fileName || (bu === 'LOGISTICS' && !nomCourt)}
+              disabled={loading || !fileName || (bu === 'LOGISTICS' && !nomCourt) || (isTemplate && (preview?.mandatoryWarnings?.length ?? 0) > 0)}
               className={`w-full flex items-center justify-center gap-2 bg-gradient-to-r ${currentBu.color} text-white py-3 rounded-xl text-sm font-bold hover:opacity-90 disabled:opacity-40 transition-opacity shadow-md`}
             >
-              {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> Import en cours…</> : <><Upload className="w-4 h-4" /> Lancer l'import</>}
+              {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> Importing…</> : <><Upload className="w-4 h-4" /> Run import</>}
             </button>
           </div>
         </div>
@@ -351,31 +378,32 @@ export default function ImportPage() {
                 : <div className="w-9 h-9 bg-green-100 rounded-xl flex items-center justify-center"><CheckCircle className="w-5 h-5 text-green-600" /></div>}
               <div>
                 <p className={`font-bold text-sm ${hasErrors ? 'text-red-800' : 'text-green-800'}`}>
-                  {hasErrors ? 'Import terminé avec erreurs' : 'Import réussi'}
+                  {hasErrors ? 'Import finished with errors' : 'Import successful'}
                 </p>
                 {isSuccess && result.entiteNom && (
                   <p className="text-xs text-green-700 mt-0.5">
                     {BU_LABELS[result.bu ?? ''] ?? result.bu} · {result.entiteNom} · {result.annee ?? year}
+                    {result.devise && result.devise !== 'EUR' && ` · ${result.devise} → EUR${rateSuffix(result.devise, result.tauxDevise, result.tauxDeviseBudget, result.tauxDeviseN1)}`}
                   </p>
                 )}
               </div>
             </div>
             {isSuccess && result.detectedMonths && result.detectedMonths.length > 0 && (
               <div className="flex items-center gap-2 flex-wrap mb-3">
-                <span className="text-xs text-green-700 font-semibold">Mois importés :</span>
+                <span className="text-xs text-green-700 font-semibold">Imported months:</span>
                 {result.detectedMonths.map(m => (
                   <span key={m} className="bg-green-100 text-green-800 text-xs font-bold px-2 py-0.5 rounded-full">{MONTHS_EN[m - 1]}</span>
                 ))}
                 {result.referenceMois && (
-                  <span className="ml-1 text-xs text-green-600">· YTD réf. <strong>{MONTHS_EN[result.referenceMois - 1]}</strong></span>
+                  <span className="ml-1 text-xs text-green-600">· YTD ref. <strong>{MONTHS_EN[result.referenceMois - 1]}</strong></span>
                 )}
               </div>
             )}
             <div className="grid grid-cols-3 gap-3 mb-4">
               {[
-                { label: 'Créés',    value: result.created,       color: 'text-green-700 bg-green-100' },
-                { label: 'Modifiés', value: result.updated,       color: 'text-blue-700 bg-blue-100'   },
-                { label: 'Erreurs',  value: result.errors.length, color: 'text-red-700 bg-red-100'     },
+                { label: 'Created',  value: result.created,       color: 'text-green-700 bg-green-100' },
+                { label: 'Updated',  value: result.updated,       color: 'text-blue-700 bg-blue-100'   },
+                { label: 'Errors',   value: result.errors.length, color: 'text-red-700 bg-red-100'     },
               ].map(s => (
                 <div key={s.label} className={`${s.color} rounded-xl p-3 text-center`}>
                   <p className="text-2xl font-black">{s.value}</p>
@@ -388,17 +416,27 @@ export default function ImportPage() {
                 {result.errors.map((e, i) => <li key={i} className="flex gap-1.5"><span className="text-red-400">•</span>{e}</li>)}
               </ul>
             )}
+            {(result.parseWarnings?.length ?? 0) > 0 && (
+              <div className="text-xs bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
+                <p className="font-semibold text-amber-800 mb-1">
+                  {result.parseWarnings!.length} non-numeric cell(s) imported as 0 — fix them in the file then re-run the import (it overwrites the values, no need to delete anything):
+                </p>
+                <ul className="text-amber-700 space-y-0.5 max-h-32 overflow-y-auto">
+                  {result.parseWarnings!.map((w, i) => <li key={i} className="flex gap-1.5"><span className="text-amber-400">•</span>{w}</li>)}
+                </ul>
+              </div>
+            )}
             {isSuccess && (
               <div className="flex items-center gap-3 pt-1 border-t border-green-200/60">
                 <div className="flex items-center gap-1.5 text-xs text-green-700">
                   <ArrowRight className="w-3.5 h-3.5" />
-                  Allez dans <strong>Figures</strong> pour visualiser les données
+                  Go to <strong>Figures</strong> to view the data
                 </div>
                 {result.entiteId && (
                   <button onClick={handleUndoImport} disabled={resetting}
                     className="ml-auto flex items-center gap-1.5 text-xs text-red-600 hover:text-red-700 font-semibold px-2.5 py-1 rounded-lg border border-red-200 hover:bg-red-50 transition-colors disabled:opacity-50">
                     {resetting ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
-                    Annuler cet import
+                    Undo this import
                   </button>
                 )}
               </div>
@@ -409,28 +447,29 @@ export default function ImportPage() {
         {resetDone && !result && (
           <div className="bg-orange-50 border border-orange-200 rounded-2xl p-4">
             <div className="flex items-center gap-2 text-orange-800 text-sm font-semibold mb-1">
-              <RotateCcw className="w-4 h-4" /> Données supprimées
+              <RotateCcw className="w-4 h-4" /> Data deleted
             </div>
             <p className="text-xs text-orange-700">
-              {resetDone.plDeleted} lignes P&L et {resetDone.salesDeleted} lignes clients supprimées.
+              {resetDone.plDeleted} P&L rows and {resetDone.salesDeleted} client rows deleted.
             </p>
           </div>
         )}
 
-        {/* Reset section */}
+        {/* Reset section — admin only (action destructive) */}
+        {!isViewer && (
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
           <button onClick={() => setShowReset(s => !s)}
             className="w-full px-5 py-3.5 flex items-center justify-between hover:bg-gray-50 transition-colors">
             <div className="flex items-center gap-2.5">
               <RotateCcw className="w-4 h-4 text-gray-400" />
-              <span className="text-sm font-semibold text-gray-700">Réinitialiser des données importées</span>
+              <span className="text-sm font-semibold text-gray-700">Reset imported data</span>
             </div>
             {showReset ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
           </button>
           {showReset && (
             <div className="px-5 pb-5 pt-1 space-y-4 border-t border-gray-100">
               <p className="text-xs text-gray-500">
-                Supprime toutes les données P&L et clients de l'entité pour une année. Action <strong>irréversible</strong>.
+                Deletes all P&L and client data for the entity for a given year. <strong>Irreversible</strong>.
               </p>
               <div className="grid grid-cols-3 gap-3">
                 <div>
@@ -443,15 +482,15 @@ export default function ImportPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wide">Entité</label>
+                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wide">Entity</label>
                   <select value={resetEntiteId ?? ''} onChange={e => setResetEntiteId(parseInt(e.target.value) || null)}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#00A3B4] focus:outline-none">
-                    <option value="">Sélectionner…</option>
+                    <option value="">Select…</option>
                     {resetEntites.map(e => <option key={e.id} value={e.id}>{e.nomCourt}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wide">Année</label>
+                  <label className="block text-xs font-bold text-gray-500 mb-1.5 uppercase tracking-wide">Year</label>
                   <input type="number" value={resetYear} onChange={e => setResetYear(parseInt(e.target.value))} min={2020} max={2030}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#00A3B4] focus:outline-none" />
                 </div>
@@ -459,16 +498,17 @@ export default function ImportPage() {
               <button onClick={handleResetSection} disabled={resetting || !resetEntiteId}
                 className="flex items-center gap-2 bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-40 transition-colors">
                 {resetting ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
-                {resetting ? 'Suppression…' : 'Supprimer les données'}
+                {resetting ? 'Deleting…' : 'Delete data'}
               </button>
               {resetDone && (
                 <p className="text-xs text-green-700 font-medium">
-                  ✓ {resetDone.plDeleted} lignes P&L + {resetDone.salesDeleted} lignes clients supprimées.
+                  ✓ {resetDone.plDeleted} P&L rows + {resetDone.salesDeleted} client rows deleted.
                 </p>
               )}
             </div>
           )}
         </div>
+        )}
       </div>
 
       {/* ── RIGHT: preview panel (full remaining width) ── */}
@@ -482,11 +522,11 @@ export default function ImportPage() {
                 <Eye className="w-4 h-4 text-white" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-white font-bold text-sm">Aperçu du fichier</p>
+                <p className="text-white font-bold text-sm">File preview</p>
                 {preview && !preview.errors.length && (
                   <p className="text-white/60 text-xs truncate">
                     {BU_LABELS[preview.bu ?? ''] ?? preview.bu} · {preview.entiteNom} · {preview.annee}
-                    {preview.isCfa && ' · valeurs converties CFA→EUR'}
+                    {preview.devise && preview.devise !== 'EUR' && ` · entered in ${preview.devise}, converted to EUR${rateSuffix(preview.devise, preview.tauxDevise, preview.tauxDeviseBudget, preview.tauxDeviseN1)}`}
                   </p>
                 )}
               </div>
@@ -502,13 +542,13 @@ export default function ImportPage() {
             {previewLoading && (
               <div className="flex items-center gap-3 py-12 justify-center">
                 <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
-                <span className="text-sm text-gray-400">Analyse du fichier…</span>
+                <span className="text-sm text-gray-400">Analyzing file…</span>
               </div>
             )}
 
             {preview && preview.errors.length > 0 && (
               <div className="p-5 space-y-1">
-                <p className="text-xs font-semibold text-red-600 mb-2">Erreurs détectées</p>
+                <p className="text-xs font-semibold text-red-600 mb-2">Errors detected</p>
                 {preview.errors.map((e, i) => (
                   <p key={i} className="text-xs text-red-600 bg-red-50 rounded px-2 py-1">{e}</p>
                 ))}
@@ -521,7 +561,7 @@ export default function ImportPage() {
                 <div className="flex border-b border-gray-200 flex-shrink-0 px-1">
                   {[
                     { key: 'pl' as const, label: `P&L (${preview.lines.length + (preview.statsLines?.length ?? 0) + preview.overheadLines.length} lignes)` },
-                    { key: 'clients' as const, label: `Clients (${clientPairs.length})` },
+                    { key: 'clients' as const, label: `Clients (${clientLines.length})` },
                   ].map(t => (
                     <button key={t.key} onClick={() => setPreviewTab(t.key)}
                       className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors ${
@@ -655,7 +695,7 @@ export default function ImportPage() {
                         </div>
 
                         <p className="text-xs text-gray-400 text-center py-3">
-                          Valeurs en K€{preview.isCfa ? ' · converties depuis CFA (÷655.957)' : ''} · Cliquez «&nbsp;Lancer l'import&nbsp;» pour valider
+                          Values in K€{preview.devise && preview.devise !== 'EUR' ? ` · converted from ${preview.devise}${rateSuffix(preview.devise, preview.tauxDevise, preview.tauxDeviseBudget, preview.tauxDeviseN1)}` : ''} · Click «&nbsp;Run import&nbsp;» to confirm
                         </p>
                       </div>
                     );
@@ -664,38 +704,44 @@ export default function ImportPage() {
                   {/* ── CLIENTS TAB ── */}
                   {previewTab === 'clients' && (
                     <div className="overflow-x-auto">
-                      {clientPairs.length === 0 ? (
-                        <p className="text-sm text-gray-400 text-center py-12">Aucun client trouvé dans la feuille «&nbsp;PL clients&nbsp;»</p>
+                      {preview.clientCols && (
+                        <div className={`text-[11px] px-3 py-2 border-b ${preview.clientCols.budgetFound ? 'text-gray-500 bg-gray-50' : 'text-amber-800 bg-amber-50 border-amber-200'}`}>
+                          Detected columns — Sales:&nbsp;<strong>{preview.clientCols.ventes}</strong> · COS:&nbsp;<strong>{preview.clientCols.cos}</strong> · Budget:&nbsp;<strong>{preview.clientCols.budget}</strong>
+                          {!preview.clientCols.budgetFound && <> — <strong>no header named “Budget” was found</strong>, defaulting to column {preview.clientCols.budget}. Make sure the budget column has a header containing “Budget”.</>}
+                        </div>
+                      )}
+                      {clientLines.length === 0 ? (
+                        <p className="text-sm text-gray-400 text-center py-12">No client found in the «&nbsp;PL clients&nbsp;» sheet</p>
                       ) : (
                         <table className="text-xs w-full">
                           <thead className="sticky top-0 bg-gray-50 z-10">
                             <tr className="border-b border-gray-200">
                               <th className="sticky left-0 bg-gray-50 text-left px-3 py-2.5 font-semibold text-gray-600 min-w-[160px]">Client</th>
-                              <th className="text-right px-3 py-2.5 font-semibold text-gray-700 whitespace-nowrap">Rev. MTD</th>
-                              <th className="text-right px-3 py-2.5 font-semibold text-gray-700 whitespace-nowrap">Rev. YTD</th>
-                              <th className="text-right px-3 py-2.5 font-semibold text-gray-500 whitespace-nowrap">Rev. Budget</th>
-                              <th className="text-right px-3 py-2.5 font-semibold text-gray-700 whitespace-nowrap border-l border-gray-100">GM YTD</th>
-                              <th className="text-right px-3 py-2.5 font-semibold text-gray-700 whitespace-nowrap">Marge %</th>
-                              <th className="text-right px-3 py-2.5 font-semibold text-gray-500 whitespace-nowrap">GM Budget</th>
+                              <th className="text-right px-3 py-2.5 font-semibold text-gray-700 whitespace-nowrap">Sales YTD</th>
+                              <th className="text-right px-3 py-2.5 font-semibold text-gray-700 whitespace-nowrap">COS YTD</th>
+                              <th className="text-right px-3 py-2.5 font-semibold text-gray-800 whitespace-nowrap border-l border-gray-100">Margin YTD</th>
+                              <th className="text-right px-3 py-2.5 font-semibold text-blue-700 whitespace-nowrap">Margin rate</th>
+                              <th className="text-right px-3 py-2.5 font-semibold text-gray-500 whitespace-nowrap">Budget {preview.clientCols ? `(col. ${preview.clientCols.budget})` : ''}</th>
+                              <th className="text-right px-3 py-2.5 font-semibold text-gray-400 whitespace-nowrap">Months</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {clientPairs.map(({ nom, rev, mrg }) => (
-                              <tr key={nom} className="border-b border-gray-50 hover:bg-gray-50/50">
-                                <td className="sticky left-0 bg-white px-3 py-1.5 font-medium text-gray-700">{nom}</td>
-                                <td className="px-3 py-1.5 text-right tabular-nums text-gray-600 whitespace-nowrap">{rev ? fmtK(rev.mtd) : '—'}</td>
-                                <td className="px-3 py-1.5 text-right tabular-nums text-gray-800 whitespace-nowrap font-semibold">{rev ? fmtK(rev.ytd) : '—'}</td>
-                                <td className="px-3 py-1.5 text-right tabular-nums text-gray-400 whitespace-nowrap">{rev ? fmtK(rev.budget) : '—'}</td>
-                                <td className="px-3 py-1.5 text-right tabular-nums text-gray-800 whitespace-nowrap border-l border-gray-100 font-semibold">{mrg ? fmtK(mrg.ytd) : '—'}</td>
-                                <td className="px-3 py-1.5 text-right tabular-nums text-blue-700 whitespace-nowrap">{mrg ? fmtPct(mrg.marginRate) : '—'}</td>
-                                <td className="px-3 py-1.5 text-right tabular-nums text-gray-400 whitespace-nowrap">{mrg ? fmtK(mrg.budget) : '—'}</td>
+                            {clientLines.map(cl => (
+                              <tr key={cl.clientNom} className="border-b border-gray-50 hover:bg-gray-50/50">
+                                <td className="sticky left-0 bg-white px-3 py-1.5 font-medium text-gray-700">{cl.clientNom}</td>
+                                <td className="px-3 py-1.5 text-right tabular-nums text-gray-800 whitespace-nowrap font-semibold">{fmtK(cl.ventesYtd)}</td>
+                                <td className="px-3 py-1.5 text-right tabular-nums text-gray-600 whitespace-nowrap">{fmtK(cl.cosYtd)}</td>
+                                <td className="px-3 py-1.5 text-right tabular-nums text-gray-800 whitespace-nowrap border-l border-gray-100 font-semibold">{fmtK(cl.margeYtd)}</td>
+                                <td className="px-3 py-1.5 text-right tabular-nums text-blue-700 whitespace-nowrap">{fmtPct(cl.tauxMarge)}</td>
+                                <td className={`px-3 py-1.5 text-right tabular-nums whitespace-nowrap font-semibold ${cl.budgetAnnuel ? 'text-violet-700' : 'text-gray-300'}`}>{fmtK(cl.budgetAnnuel)}</td>
+                                <td className="px-3 py-1.5 text-right tabular-nums text-gray-400 whitespace-nowrap">{cl.months.length}</td>
                               </tr>
                             ))}
                           </tbody>
                         </table>
                       )}
                       <p className="text-xs text-gray-400 text-center py-3">
-                        Valeurs en K€ · Cliquez «&nbsp;Lancer l'import&nbsp;» pour valider
+                        Values in K€ · Margin = Sales − COS · Click «&nbsp;Run import&nbsp;» to confirm
                       </p>
                     </div>
                   )}

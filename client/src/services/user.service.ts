@@ -13,6 +13,7 @@ export interface CreateUserDto {
 }
 
 export interface UpdateUserDto {
+  email?: string;
   nom?: string;
   prenom?: string;
   role?: string;

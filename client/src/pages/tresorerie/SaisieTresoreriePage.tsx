@@ -1,10 +1,10 @@
-import { useState, useEffect, useMemo } from 'react';
+import { Fragment, useState, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { tresorerieService } from '../../services/tresorerie.service';
 import { useAuthStore } from '../../stores/auth.store';
 import { formatNumber } from '../../lib/utils';
-import { Save, CheckCircle } from 'lucide-react';
-import type { TresorerieSaisieRow } from '../../types';
+import { Save, CheckCircle, ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react';
+import type { TresorerieSaisieRow, TresorerieMouvement } from '../../types';
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
@@ -12,12 +12,20 @@ function today(): string {
 
 type EditableRow = TresorerieSaisieRow;
 
+function recompute(row: EditableRow): EditableRow {
+  const detailed = row.mouvements.length > 0;
+  const entrees = detailed ? row.mouvements.filter(m => m.type === 'ENTREE').reduce((s, m) => s + m.montant, 0) : row.entrees;
+  const sorties = detailed ? row.mouvements.filter(m => m.type === 'SORTIE').reduce((s, m) => s + m.montant, 0) : row.sorties;
+  return { ...row, entrees, sorties, positionJ: row.positionJMoins1 + entrees - sorties };
+}
+
 export default function SaisieTresoreriePage() {
   const { user } = useAuthStore();
   const qc = useQueryClient();
   const [date, setDate] = useState(today());
   const [entiteId, setEntiteId] = useState<number | null>(null);
   const [rows, setRows] = useState<Record<number, EditableRow>>({});
+  const [expanded, setExpanded] = useState<Record<number, boolean>>({});
   const [saved, setSaved] = useState(false);
 
   const { data: entites = [] } = useQuery({
@@ -49,6 +57,7 @@ export default function SaisieTresoreriePage() {
         caisseJMoins1: r.caisseJMoins1,
         caisseJ: r.caisseJ,
         commentaire: r.commentaire,
+        mouvements: r.mouvements.map(m => ({ type: m.type, montant: m.montant, libelle: m.libelle })),
       }));
       return tresorerieService.batchUpsertSaisie(date, entiteId!, payload);
     },
@@ -64,9 +73,35 @@ export default function SaisieTresoreriePage() {
     setRows(prev => {
       const current = prev[banqueId];
       if (!current) return prev;
-      const next = { ...current, ...patch };
-      next.positionJ = next.positionJMoins1 + next.entrees - next.sorties;
-      return { ...prev, [banqueId]: next };
+      return { ...prev, [banqueId]: recompute({ ...current, ...patch }) };
+    });
+  }
+
+  function addMouvement(banqueId: number, type: 'ENTREE' | 'SORTIE') {
+    setRows(prev => {
+      const current = prev[banqueId];
+      if (!current) return prev;
+      const mouvements: TresorerieMouvement[] = [...current.mouvements, { type, montant: 0, libelle: '' }];
+      return { ...prev, [banqueId]: recompute({ ...current, mouvements }) };
+    });
+    setExpanded(prev => ({ ...prev, [banqueId]: true }));
+  }
+
+  function updateMouvement(banqueId: number, index: number, patch: Partial<TresorerieMouvement>) {
+    setRows(prev => {
+      const current = prev[banqueId];
+      if (!current) return prev;
+      const mouvements = current.mouvements.map((m, i) => i === index ? { ...m, ...patch } : m);
+      return { ...prev, [banqueId]: recompute({ ...current, mouvements }) };
+    });
+  }
+
+  function removeMouvement(banqueId: number, index: number) {
+    setRows(prev => {
+      const current = prev[banqueId];
+      if (!current) return prev;
+      const mouvements = current.mouvements.filter((_, i) => i !== index);
+      return { ...prev, [banqueId]: recompute({ ...current, mouvements }) };
     });
   }
 
@@ -145,11 +180,26 @@ export default function SaisieTresoreriePage() {
               <tbody>
                 {rowList.map(r => {
                   const ecart = r.positionJ - r.positionBanque;
+                  const detailed = r.mouvements.length > 0;
+                  const isOpen = !!expanded[r.banqueId];
                   return (
-                    <tr key={r.banqueId} className="border-b border-gray-100 hover:bg-gray-50/30">
+                    <Fragment key={r.banqueId}>
+                    <tr className="border-b border-gray-100 hover:bg-gray-50/30">
                       <td className="sticky left-0 bg-white px-3 py-1.5 text-xs text-gray-700 min-w-40">
-                        {r.nomBanque}
-                        <div className="text-[10px] text-gray-400">{r.typeCompte}</div>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setExpanded(prev => ({ ...prev, [r.banqueId]: !prev[r.banqueId] }))}
+                            className="text-gray-400 hover:text-gray-700 flex-shrink-0"
+                            title="Détail entrées / sorties"
+                          >
+                            {isOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                          </button>
+                          <div>
+                            {r.nomBanque}
+                            <div className="text-[10px] text-gray-400">{r.typeCompte}</div>
+                          </div>
+                        </div>
                       </td>
                       <td className="px-2 py-1 text-center font-mono text-gray-500">{r.devise}</td>
                       <td className="px-2 py-1">
@@ -161,22 +211,34 @@ export default function SaisieTresoreriePage() {
                         />
                       </td>
                       <td className="px-2 py-1">
-                        <input
-                          type="number" step="0.01"
-                          value={r.entrees || ''}
-                          placeholder="0"
-                          onChange={e => updateRow(r.banqueId, { entrees: parseFloat(e.target.value) || 0 })}
-                          className={inputCls}
-                        />
+                        {detailed ? (
+                          <div className="text-right font-mono text-gray-700 px-1.5 py-1" title="Somme des lignes détaillées">
+                            {formatNumber(r.entrees)} <span className="text-[9px] text-teal-600">(détaillé)</span>
+                          </div>
+                        ) : (
+                          <input
+                            type="number" step="0.01"
+                            value={r.entrees || ''}
+                            placeholder="0"
+                            onChange={e => updateRow(r.banqueId, { entrees: parseFloat(e.target.value) || 0 })}
+                            className={inputCls}
+                          />
+                        )}
                       </td>
                       <td className="px-2 py-1">
-                        <input
-                          type="number" step="0.01"
-                          value={r.sorties || ''}
-                          placeholder="0"
-                          onChange={e => updateRow(r.banqueId, { sorties: parseFloat(e.target.value) || 0 })}
-                          className={inputCls}
-                        />
+                        {detailed ? (
+                          <div className="text-right font-mono text-gray-700 px-1.5 py-1" title="Somme des lignes détaillées">
+                            {formatNumber(r.sorties)} <span className="text-[9px] text-teal-600">(détaillé)</span>
+                          </div>
+                        ) : (
+                          <input
+                            type="number" step="0.01"
+                            value={r.sorties || ''}
+                            placeholder="0"
+                            onChange={e => updateRow(r.banqueId, { sorties: parseFloat(e.target.value) || 0 })}
+                            className={inputCls}
+                          />
+                        )}
                       </td>
                       <td className="px-2 py-1.5 text-right font-mono font-semibold text-gray-700">
                         {formatNumber(r.positionJ)}
@@ -201,6 +263,62 @@ export default function SaisieTresoreriePage() {
                         />
                       </td>
                     </tr>
+                    {isOpen && (
+                      <tr className="border-b border-gray-100 bg-gray-50/50">
+                        <td colSpan={9} className="px-3 py-3">
+                          <div className="pl-6 space-y-2">
+                            {r.mouvements.length === 0 && (
+                              <p className="text-[11px] text-gray-400">Aucune ligne de détail — le total Entrées/Sorties reste modifiable directement ci-dessus.</p>
+                            )}
+                            {r.mouvements.map((m, idx) => (
+                              <div key={idx} className="flex items-center gap-2">
+                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${m.type === 'ENTREE' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                  {m.type === 'ENTREE' ? 'Entrée' : 'Sortie'}
+                                </span>
+                                <input
+                                  type="text"
+                                  value={m.libelle}
+                                  onChange={e => updateMouvement(r.banqueId, idx, { libelle: e.target.value })}
+                                  placeholder="Libellé…"
+                                  className="flex-1 border border-gray-200 rounded px-1.5 py-1 text-xs focus:ring-1 focus:ring-[#00A3B4] focus:outline-none bg-white"
+                                />
+                                <input
+                                  type="number" step="0.01"
+                                  value={m.montant || ''}
+                                  placeholder="0"
+                                  onChange={e => updateMouvement(r.banqueId, idx, { montant: parseFloat(e.target.value) || 0 })}
+                                  className={inputCls + ' max-w-[140px]'}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => removeMouvement(r.banqueId, idx)}
+                                  className="p-1 text-gray-300 hover:text-red-500 rounded transition-colors flex-shrink-0"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                            <div className="flex items-center gap-3 pt-1">
+                              <button
+                                type="button"
+                                onClick={() => addMouvement(r.banqueId, 'ENTREE')}
+                                className="flex items-center gap-1 text-[11px] text-green-700 hover:text-green-800 font-semibold"
+                              >
+                                <Plus className="w-3 h-3" /> Ajouter une entrée
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => addMouvement(r.banqueId, 'SORTIE')}
+                                className="flex items-center gap-1 text-[11px] text-red-700 hover:text-red-800 font-semibold"
+                              >
+                                <Plus className="w-3 h-3" /> Ajouter une sortie
+                              </button>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   );
                 })}
               </tbody>
